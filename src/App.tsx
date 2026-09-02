@@ -210,9 +210,10 @@ export default function App() {
   // useEffect cannot race against and overwrite the view we intentionally set.
   const postGenerationRef = React.useRef(false);
 
-  // Check URL parameters & Hostname changes dynamically & fetch server app config
+  // Check URL parameters & Hostname changes dynamically & fetch server app config.
+  // This only runs ONCE on mount to detect Render deployments / URL-based domain routing.
+  // It must NOT run again after generation completes.
   useEffect(() => {
-    // Do not run if generation already completed — we want to stay on standalone_testbed.
     if (postGenerationRef.current) return;
 
     const initApp = async () => {
@@ -223,13 +224,18 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const isExplicitTestbed = params.get('view') === 'testbed' || params.get('mode') === 'testbed';
 
-      // 1. Check server-side deployed app config
+      // Only activate for Render deployments or explicit testbed URL params.
+      // On the studio (localhost / non-Render), this effect should be a no-op
+      // so it cannot interfere with generation or studio navigation.
+      if (!isRenderHost && !isExplicitTestbed) {
+        return;
+      }
+
       try {
         const deployedRes = await fetch('/api/deployed-app');
         if (deployedRes.ok) {
           const deployedData = await deployedRes.json();
           if (deployedData.activeIr) {
-            // Don't overwrite post-generation navigation
             if (postGenerationRef.current) return;
             setCandidateIr(deployedData.activeIr);
             setTargetAppName(deployedData.appName || deployedData.activeIr.name);
@@ -273,15 +279,8 @@ export default function App() {
           }
         }
       } catch {
-        // Fall back to client detection
+        // swallow — this effect is best-effort for Render deployment detection only
       }
-
-      // 2. Client-side URL detection — only used as a last resort on first boot
-      if (postGenerationRef.current) return;
-      const setup = getInitialViewAndIr();
-      setCandidateIr(setup.ir);
-      setTargetAppName(setup.ir.name);
-      setCurrentView(setup.view);
     };
 
     initApp();
@@ -562,8 +561,6 @@ export default function App() {
   }
 
   // Only show the platform login when explicitly navigated there.
-  // Do NOT use !currentUser as a catch-all — that fights with post-generation
-  // view transitions that run before React re-reads currentUser from storage.
   if (currentView === 'login') {
     return (
       <FloePlatformLogin
