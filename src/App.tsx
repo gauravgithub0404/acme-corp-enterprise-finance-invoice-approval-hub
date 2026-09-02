@@ -207,8 +207,15 @@ export default function App() {
   const [targetAppName, setTargetAppName] = useState<string | undefined>(undefined);
   const [targetAppLogo, setTargetAppLogo] = useState<string | undefined>(undefined);
 
+  // Track whether we are mid-generation or post-generation so the boot
+  // useEffect cannot race against and overwrite the view we intentionally set.
+  const postGenerationRef = React.useRef(false);
+
   // Check URL parameters & Hostname changes dynamically & fetch server app config
   useEffect(() => {
+    // Do not run if generation already completed — we want to stay on app_login.
+    if (postGenerationRef.current) return;
+
     const initApp = async () => {
       if (typeof window === 'undefined') return;
 
@@ -223,6 +230,8 @@ export default function App() {
         if (deployedRes.ok) {
           const deployedData = await deployedRes.json();
           if (deployedData.activeIr) {
+            // Don't overwrite post-generation navigation
+            if (postGenerationRef.current) return;
             setCandidateIr(deployedData.activeIr);
             setTargetAppName(deployedData.appName || deployedData.activeIr.name);
             if ((isRenderHost || deployedData.isStandalone) && !isExplicitTestbed) {
@@ -238,6 +247,7 @@ export default function App() {
         if (infoRes.ok) {
           const info = await infoRes.json();
           if (info.activeIr) {
+            if (postGenerationRef.current) return;
             setCandidateIr(info.activeIr);
             setTargetAppName(info.appName || info.activeIr.name);
             if ((isRenderHost || info.isStandalone) && !isExplicitTestbed) {
@@ -251,6 +261,7 @@ export default function App() {
           if (targetDomain) {
             const resolved = resolveIrForTarget(targetDomain);
             if (resolved) {
+              if (postGenerationRef.current) return;
               setCandidateIr(resolved);
               setTargetAppName(info.appName || resolved.name);
               if ((isRenderHost || info.isStandalone) && !isExplicitTestbed) {
@@ -266,7 +277,8 @@ export default function App() {
         // Fall back to client detection
       }
 
-      // 2. Client-side URL detection
+      // 2. Client-side URL detection — only used as a last resort on first boot
+      if (postGenerationRef.current) return;
       const setup = getInitialViewAndIr();
       setCandidateIr(setup.ir);
       setTargetAppName(setup.ir.name);
@@ -436,6 +448,10 @@ export default function App() {
   };
 
   const handleGenerationComplete = () => {
+    // Lock the boot useEffect so it cannot race against this transition and
+    // overwrite our intended view (app_login) with standalone_testbed or login.
+    postGenerationRef.current = true;
+
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('floe_active_app_ir', JSON.stringify(candidateIr));
