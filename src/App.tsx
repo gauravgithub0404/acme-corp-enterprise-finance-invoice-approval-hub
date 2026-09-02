@@ -108,7 +108,7 @@ export function resolveIrForTarget(targetDomain?: string | null, customIr?: Inte
 export default function App() {
   // Helper to determine initial view and active IR based on URL params / subdomain / hostname
   const getInitialViewAndIr = (): { 
-    view: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login', 
+    view: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login' | 'app_login', 
     ir: IntermediateRepresentation 
   } => {
     if (typeof window !== 'undefined') {
