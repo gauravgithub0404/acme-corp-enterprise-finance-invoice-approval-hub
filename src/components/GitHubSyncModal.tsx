@@ -31,6 +31,9 @@ interface GitHubSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  /** When true the modal was opened as part of the Approve & Build flow.
+   *  Shows a "Save & Start Build" primary action instead of the normal push. */
+  pendingApproval?: boolean;
 }
 
 interface RepoStatus {
@@ -58,7 +61,7 @@ interface GitHubUser {
   orgs: { login: string; avatar_url: string; description?: string }[];
 }
 
-export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClose, onSuccess }) => {
+export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClose, onSuccess, pendingApproval = false }) => {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
   const [patToken, setPatToken] = useState('');
   
@@ -178,6 +181,12 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
     localStorage.setItem('floe_repo_mode', repoMode);
     setSavedSettingsSuccess(true);
     setTimeout(() => setSavedSettingsSuccess(false), 2500);
+    // If opened as part of the Approve & Build flow and a token was entered,
+    // closing the modal is sufficient — ReviewScreen's onClose handler picks
+    // up the saved token and continues the build.
+    if (pendingApproval && patToken.trim()) {
+      onClose();
+    }
   };
 
   const handleSyncToGitHub = async (e: React.FormEvent) => {
@@ -247,14 +256,16 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
             </div>
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                Customer Repository & Auto-Deploy Setup
+                {pendingApproval ? 'GitHub Credentials Required to Build' : 'Customer Repository & Auto-Deploy Setup'}
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Auto-Create Repo Enabled
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Create a dedicated GitHub repo per customer and auto-trigger Render cloud continuous deployments
+                {pendingApproval
+                  ? 'Enter your GitHub PAT and click "Save & Start Build" — your repo will be created and the pipeline will start.'
+                  : 'Create a dedicated GitHub repo per customer and auto-trigger Render cloud continuous deployments'}
               </p>
             </div>
           </div>
@@ -509,7 +520,7 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
             onClick={handleSaveSettings}
             className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white transition-colors"
           >
-            Save Configuration
+            {pendingApproval ? 'Save & Start Build' : 'Save Configuration'}
           </button>
 
           <button

@@ -32,6 +32,8 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [repoStatus, setRepoStatus] = useState<'idle' | 'pushing' | 'done' | 'error'>('idle');
+  // Holds the finalised IR while waiting for the GitHub modal to collect a PAT
+  const [pendingBuildIr, setPendingBuildIr] = useState<IntermediateRepresentation | null>(null);
 
   // Customer Name & Target Repo Settings
   const sanitizeSlug = (str: string) =>
@@ -95,42 +97,32 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     setPlan(recalculated);
   };
 
-  const handleBuild = async () => {
-    const updatedIr: IntermediateRepresentation = {
-      ...currentIr,
-      requirement_profile: plan.requirement_profile,
-      architecture_plan: {
-        ...plan,
-        selected_target: selectedTarget
-      }
-    };
+  /**
+   * Executes the actual repo push + pipeline handoff.
+   * Called either directly from handleBuild (token already saved) or from
+   * the GitHubSyncModal's onSuccess callback (token just been saved).
+   */
+  const proceedWithBuild = (ir: IntermediateRepresentation) => {
+    const token   = typeof window !== 'undefined' ? localStorage.getItem('floe_github_pat') || '' : '';
+    const owner   = typeof window !== 'undefined' ? localStorage.getItem('floe_github_owner') || defaultOwner : defaultOwner;
+    const branch  = typeof window !== 'undefined' ? localStorage.getItem('floe_github_branch') || 'main' : 'main';
+    const customer = typeof window !== 'undefined' ? localStorage.getItem('floe_customer_name') || customerName : customerName;
 
-    setIsApproving(true);
-
-    // Fire GitHub sync-push in parallel — creates the customer repo (or pushes
-    // to an existing one) while the generation pipeline starts.  We read the
-    // saved PAT + owner from localStorage so the user doesn't have to open the
-    // GitHub modal first — if nothing is saved we still proceed without blocking.
-    const savedToken  = typeof window !== 'undefined' ? localStorage.getItem('floe_github_pat') || '' : '';
-    const savedOwner  = typeof window !== 'undefined' ? localStorage.getItem('floe_github_owner') || defaultOwner : defaultOwner;
-    const savedBranch = typeof window !== 'undefined' ? localStorage.getItem('floe_github_branch') || 'main' : 'main';
-    const savedCustomer = typeof window !== 'undefined' ? localStorage.getItem('floe_customer_name') || customerName : customerName;
-
-    if (savedToken) {
+    if (token) {
       setRepoStatus('pushing');
       fetch('/api/github/sync-push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: savedCustomer,
-          appName: updatedIr.name || updatedIr.domain,
-          owner: savedOwner,
-          repo: expectedRepoSlug,
-          branch: savedBranch,
-          token: savedToken,
+          customerName: customer,
+          appName: ir.name || ir.domain,
+          owner,
+          repo: `${sanitizeSlug(customer)}-${sanitizeSlug(ir.name || ir.domain || 'app')}`,
+          branch,
+          token,
           isPrivate: false,
           createRepoIfMissing: true,
-          commitMessage: `feat(floe): generate ${updatedIr.name} for ${savedCustomer}`,
+          commitMessage: `feat(floe): generate ${ir.name} for ${customer}`,
           triggerRenderDeploy: true
         })
       })
@@ -139,8 +131,30 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         .catch(() => setRepoStatus('error'));
     }
 
-    // Immediately hand off to the generation pipeline — don't wait for GitHub
-    onConfirmBuild(updatedIr);
+    setPendingBuildIr(null);
+    onConfirmBuild(ir);
+  };
+
+  const handleBuild = () => {
+    const updatedIr: IntermediateRepresentation = {
+      ...currentIr,
+      requirement_profile: plan.requirement_profile,
+      architecture_plan: { ...plan, selected_target: selectedTarget }
+    };
+
+    const savedToken = typeof window !== 'undefined' ? localStorage.getItem('floe_github_pat') || '' : '';
+
+    if (!savedToken) {
+      // No PAT configured — store the IR and open the GitHub config modal so
+      // the user can enter credentials before the build starts.
+      setPendingBuildIr(updatedIr);
+      setIsApproving(false);
+      setIsGitHubModalOpen(true);
+      return;
+    }
+
+    setIsApproving(true);
+    proceedWithBuild(updatedIr);
   };
 
   const workflow = currentIr.workflows[0] || {
@@ -998,7 +1012,14 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               ? <Loader2 className="w-4 h-4 animate-spin" />
               : <Zap className="w-4 h-4 fill-white" />
             }
-            <span>{isApproving ? 'Building…' : 'Approve, Create Customer Repo & Build App'}</span>
+            <span>
+              {isApproving
+                ? 'Building…'
+                : pendingBuildIr
+                  ? 'Waiting for GitHub credentials…'
+                  : 'Approve, Create Customer Repo & Build App'
+              }
+            </span>
           </button>
         </div>
       </div>
@@ -1016,9 +1037,30 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       {/* GitHub Sync & Customer Repo Configuration Modal */}
       <GitHubSyncModal
         isOpen={isGitHubModalOpen}
-        onClose={() => setIsGitHubModalOpen(false)}
+        pendingApproval={Boolean(pendingBuildIr)}
+        onClose={() => {
+          setIsGitHubModalOpen(false);
+          // If opened as part of the approve flow, check if a PAT was saved.
+          // The user may have clicked "Save Settings" (not "Push") — that's
+          // enough for us to proceed since GenerationProgress handles the push.
+          if (pendingBuildIr) {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('floe_github_pat') || '' : '';
+            if (token) {
+              setIsApproving(true);
+              proceedWithBuild(pendingBuildIr);
+            } else {
+              // User closed without saving a token — cancel pending build
+              setPendingBuildIr(null);
+            }
+          }
+        }}
         onSuccess={() => {
           setIsGitHubModalOpen(false);
+          // Fired when a full push succeeded from inside the modal
+          if (pendingBuildIr) {
+            setIsApproving(true);
+            proceedWithBuild(pendingBuildIr);
+          }
         }}
       />
 
