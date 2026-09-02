@@ -542,7 +542,9 @@ export default function App() {
     );
   }
 
-  // If in standalone testbed mode, render the testbed wrapper view
+  // ── Post-generation destination ──────────────────────────────────────────
+  // standalone_testbed must be checked BEFORE the !currentUser guard so that
+  // completing a build always lands in the testbed regardless of session state.
   if (currentView === 'standalone_testbed') {
     const activeIr = selectedApp?.ir || candidateIr || LEAVE_MANAGEMENT_IR;
     return (
@@ -559,12 +561,24 @@ export default function App() {
     );
   }
 
-  // If in login mode or unauthenticated, render the Floe Platform Login Page
-  if (currentView === 'login' || !currentUser) {
+  // Only show the platform login when explicitly navigated there.
+  // Do NOT use !currentUser as a catch-all — that fights with post-generation
+  // view transitions that run before React re-reads currentUser from storage.
+  if (currentView === 'login') {
     return (
       <FloePlatformLogin
         onLoginSuccess={handleLoginSuccess}
         onBackToStudio={currentUser ? () => setCurrentView('dashboard') : undefined}
+      />
+    );
+  }
+
+  // Unauthenticated catch-all — only reached for views that require a user
+  // (dashboard, chat, review, generating, app_detail) when currentUser is null.
+  if (!currentUser) {
+    return (
+      <FloePlatformLogin
+        onLoginSuccess={handleLoginSuccess}
       />
     );
   }
