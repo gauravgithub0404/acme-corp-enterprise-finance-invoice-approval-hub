@@ -1,0 +1,439 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Cloud, 
+  RefreshCw, 
+  Trash2, 
+  CheckCircle2, 
+  AlertCircle, 
+  ExternalLink, 
+  Copy, 
+  Check, 
+  X, 
+  Terminal, 
+  Sparkles,
+  Layers,
+  ArrowRight,
+  ShieldAlert,
+  HardDrive,
+  Globe,
+  Plus
+} from 'lucide-react';
+import { getPublicTestbedUrl, getCurrentOrigin } from '../utils/urlHelper';
+
+interface CleanRenderModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  activeDomain?: string;
+  activeAppName?: string;
+}
+
+export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
+  isOpen,
+  onClose,
+  activeDomain = 'finance-invoice-approval',
+  activeAppName = 'Generated Application'
+}) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [isDeletingService, setIsDeletingService] = useState<string | null>(null);
+  const [selectedServiceId, setSelectedServiceId] = useState<string>('');
+  const [deleteOtherServices, setDeleteOtherServices] = useState(false);
+  const [services, setServices] = useState<any[]>([]);
+  const [result, setResult] = useState<any | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [customDomain, setCustomDomain] = useState<string>(activeDomain);
+
+  useEffect(() => {
+    setCustomDomain(activeDomain);
+  }, [activeDomain]);
+
+  const fetchServices = async () => {
+    try {
+      const res = await fetch('/api/render/services');
+      if (res.ok) {
+        const data = await res.json();
+        const sList = data.services || [];
+        setServices(sList);
+        if (sList.length > 0 && !selectedServiceId) {
+          // Prefer matching service or first
+          const matched = sList.find((s: any) => 
+            s.name?.toLowerCase().includes(activeDomain.toLowerCase()) ||
+            s.name?.toLowerCase().includes('floefinal') ||
+            s.name?.toLowerCase().includes('floe')
+          ) || sList[0];
+          setSelectedServiceId(matched.id);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load Render services:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchServices();
+      setResult(null);
+      setLogs([
+        `[Ready] Selected Domain: ${activeDomain}`,
+        `[Ready] App Name: ${activeAppName}`,
+        `[Tip] Cleaning Render wipes previous build cache and forces Render to compile your generated domain fresh.`
+      ]);
+    }
+  }, [isOpen, activeDomain]);
+
+  if (!isOpen) return null;
+
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2500);
+  };
+
+  const handleDeleteService = async (serviceId: string, serviceName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${serviceName}" from Render? This will delete the deployed web app on Render.`)) {
+      return;
+    }
+
+    setIsDeletingService(serviceId);
+    setLogs(prev => [...prev, `[Delete] Requesting deletion of service "${serviceName}" (ID: ${serviceId}) on Render...`]);
+
+    try {
+      const res = await fetch(`/api/render/services/${encodeURIComponent(serviceId)}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (res.ok && data.success !== false) {
+        setLogs(prev => [...prev, `[Deleted] Successfully deleted service "${serviceName}" from Render.`]);
+        // Refresh services list
+        await fetchServices();
+        if (selectedServiceId === serviceId) {
+          setSelectedServiceId('');
+        }
+      } else {
+        setLogs(prev => [...prev, `[Error] Failed to delete service: ${data.error || 'Unknown error'}`]);
+      }
+    } catch (err: any) {
+      setLogs(prev => [...prev, `[Fatal] Network error while deleting service: ${err.message}`]);
+    } finally {
+      setIsDeletingService(null);
+    }
+  };
+
+  const handleCleanRedeploy = async () => {
+    setIsLoading(true);
+    setLogs(prev => [
+      ...prev,
+      `[1/4] Initiating Render cache purge for domain "${customDomain}"...`,
+      `[2/4] Updating Render environment variables (FLOE_APP_DOMAIN=${customDomain})...`
+    ]);
+
+    try {
+      // 1. First sync active app to local server state
+      await fetch('/api/deployed-app', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          domain: customDomain,
+          appName: activeAppName
+        })
+      }).catch(() => {});
+
+      // 2. Call Render clean-redeploy endpoint
+      const res = await fetch('/api/render/clean-redeploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          domain: customDomain,
+          appName: activeAppName,
+          serviceId: selectedServiceId || undefined,
+          clearCache: true,
+          deleteOtherServices
+        })
+      });
+
+      const data = await res.json();
+      setResult(data);
+
+      if (data.success) {
+        if (data.deletedServices && data.deletedServices.length > 0) {
+          setLogs(prev => [
+            ...prev,
+            `[Cleanup] Deleted obsolete Render services: ${data.deletedServices.join(', ')}`
+          ]);
+        }
+        setLogs(prev => [
+          ...prev,
+          `[3/4] Render build cache purged successfully!`,
+          `[4/4] Triggered clean deployment on service "${data.serviceName || 'Render Service'}" (Deploy ID: ${data.deployId || 'active'}).`,
+          `[Done] Ready! Your app is now building clean on Render.`
+        ]);
+        fetchServices();
+      } else {
+        setLogs(prev => [
+          ...prev,
+          `[Error] ${data.error || 'Failed to trigger clean deployment on Render'}`
+        ]);
+      }
+    } catch (err: any) {
+      setLogs(prev => [...prev, `[Fatal] Network error: ${err.message}`]);
+      setResult({ success: false, error: err.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const selectedService = services.find(s => s.id === selectedServiceId);
+  const serviceUrl = selectedService?.serviceDetails?.url || (selectedService?.name ? `https://${selectedService.name}.onrender.com` : 'https://floefinal.onrender.com');
+  const directAppUrl = `${serviceUrl}/?app=${encodeURIComponent(customDomain)}`;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-slate-900 border border-slate-700/90 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden text-slate-100 animate-in fade-in zoom-in-95 duration-200">
+        
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                Clean Render & Deployed Apps
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  Cache Purge & Cleanup
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Purge Render build cache, delete obsolete apps, or force clean deployment
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+          
+          {/* Why this is needed note */}
+          <div className="p-3.5 bg-slate-950/70 rounded-xl border border-slate-800 text-xs text-slate-300 space-y-1.5">
+            <div className="font-semibold text-amber-300 flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              How Floe cleans and switches Render applications:
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Render caches npm builds between deployments. If Render still serves the previous default app, this action will <strong>purge Render's build cache</strong>, set <code className="text-amber-300 font-mono">FLOE_APP_DOMAIN={customDomain}</code>, and trigger a 100% fresh deployment. You can also <strong>delete obsolete apps</strong> directly below.
+            </p>
+          </div>
+
+          {/* Configuration Form */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="space-y-1.5">
+              <label className="text-slate-400 font-medium block">Active Domain Slug:</label>
+              <input 
+                type="text"
+                value={customDomain}
+                onChange={e => setCustomDomain(e.target.value)}
+                placeholder="e.g. finance-invoice-approval"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-slate-400 font-medium block">Target Render Web Service:</label>
+              <select
+                value={selectedServiceId}
+                onChange={e => setSelectedServiceId(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
+              >
+                {services.length > 0 ? (
+                  services.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.id.slice(0, 10)}...)
+                    </option>
+                  ))
+                ) : (
+                  <option value="">Default Render Service (Auto-detect)</option>
+                )}
+              </select>
+            </div>
+          </div>
+
+          {/* Delete Obsolete Services Checkbox */}
+          {services.length > 1 && (
+            <label className="flex items-center gap-2 p-2.5 rounded-lg bg-red-950/20 border border-red-900/30 text-xs text-red-300 cursor-pointer hover:bg-red-950/30 transition-colors">
+              <input 
+                type="checkbox"
+                checked={deleteOtherServices}
+                onChange={e => setDeleteOtherServices(e.target.checked)}
+                className="rounded border-slate-700 text-red-600 focus:ring-red-500 bg-slate-950"
+              />
+              <span>Also delete other older Render services in this account (leaves only target service)</span>
+            </label>
+          )}
+
+          {/* Deployed Render Services List */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                Deployed Services on Render ({services.length}):
+              </span>
+              <button
+                onClick={fetchServices}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" /> Refresh
+              </button>
+            </div>
+
+            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+              {services.length === 0 ? (
+                <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-slate-500 text-xs text-center">
+                  No active Render Web Services detected or Render API key not configured.
+                </div>
+              ) : (
+                services.map(s => {
+                  const isCurrentTarget = s.id === selectedServiceId;
+                  const sUrl = s.serviceDetails?.url || `https://${s.name}.onrender.com`;
+                  return (
+                    <div 
+                      key={s.id} 
+                      className={`p-2.5 rounded-lg border flex items-center justify-between gap-3 text-xs transition-all ${
+                        isCurrentTarget 
+                          ? 'bg-indigo-950/30 border-indigo-500/50 text-slate-200' 
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white truncate">{s.name}</span>
+                          {isCurrentTarget && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold uppercase">
+                              Active Target
+                            </span>
+                          )}
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {s.serviceDetails?.region || 'oregon'}
+                          </span>
+                        </div>
+                        <a 
+                          href={sUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-[11px] text-indigo-400 hover:underline truncate block"
+                        >
+                          {sUrl}
+                        </a>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => setSelectedServiceId(s.id)}
+                          className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                            isCurrentTarget 
+                              ? 'bg-indigo-600 text-white' 
+                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                          }`}
+                        >
+                          {isCurrentTarget ? 'Selected' : 'Select'}
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteService(s.id, s.name)}
+                          disabled={isDeletingService === s.id}
+                          className="p-1.5 rounded bg-red-950/60 hover:bg-red-900 text-red-400 hover:text-red-200 border border-red-800/40 transition-colors disabled:opacity-50"
+                          title="Delete app from Render"
+                        >
+                          {isDeletingService === s.id ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Direct URL Preview */}
+          <div className="p-3.5 bg-indigo-950/40 rounded-xl border border-indigo-800/50 space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-indigo-300">
+              <span className="flex items-center gap-1.5">
+                <Cloud className="w-4 h-4 text-indigo-400" />
+                Direct Multi-Domain URL on Render:
+              </span>
+              <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800 font-mono">
+                Always Loads {customDomain}
+              </span>
+            </div>
+            
+            <div className="flex items-center justify-between gap-2 bg-slate-950 p-2 rounded-lg border border-slate-800 font-mono text-xs text-indigo-300">
+              <span className="truncate">{directAppUrl}</span>
+              <button
+                onClick={() => handleCopy(directAppUrl, 'direct')}
+                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0"
+                title="Copy Direct URL"
+              >
+                {copiedKey === 'direct' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Execution Terminal Logs */}
+          <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 font-mono text-[11px] text-slate-300 space-y-1.5 max-h-36 overflow-y-auto">
+            <div className="flex items-center gap-2 pb-1 border-b border-slate-800/80 text-slate-400 text-[10px]">
+              <Terminal className="w-3.5 h-3.5 text-slate-500" />
+              <span>Render Clean & Redeploy Console</span>
+            </div>
+            {logs.map((l, idx) => (
+              <div key={idx} className={`leading-relaxed ${l.includes('[Error]') || l.includes('[Fatal]') ? 'text-red-400' : l.includes('[Done]') || l.includes('[Deleted]') ? 'text-emerald-400 font-semibold' : 'text-slate-400'}`}>
+                {l}
+              </div>
+            ))}
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition-colors"
+          >
+            Cancel
+          </button>
+
+          <div className="flex items-center gap-2">
+            <a
+              href={directAppUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Open Direct Link</span>
+            </a>
+
+            <button
+              onClick={handleCleanRedeploy}
+              disabled={isLoading}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>{isLoading ? 'Purging Cache & Deploying...' : 'Clean Cache & Redeploy on Render'}</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};

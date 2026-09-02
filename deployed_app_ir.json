@@ -1,0 +1,670 @@
+{
+  "domain": "finance-invoice-approval",
+  "name": "Enterprise Finance & Invoice Approval Hub",
+  "appName": "Enterprise Finance & Invoice Approval Hub",
+  "customerName": "AcmeCorp",
+  "updatedAt": "2026-09-02T07:40:55.944Z",
+  "ir": {
+    "ir_version": "1.0",
+    "app_id": "app-finance-01",
+    "domain": "finance-invoice-approval",
+    "name": "Enterprise Finance & Invoice Approval Hub",
+    "description": "Track vendor invoices, purchase order matching, and payment status with detailed audit logs and document attachments",
+    "entities": [
+      {
+        "name": "Vendor",
+        "description": "A registered supplier/vendor",
+        "fields": [
+          {
+            "name": "id",
+            "type": "string",
+            "required": true,
+            "description": "Primary key UUID"
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "tax_id",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "bank_account_ref",
+            "type": "string",
+            "required": false,
+            "description": "Tokenized reference to bank details, never raw account numbers"
+          }
+        ]
+      },
+      {
+        "name": "Invoice",
+        "description": "A vendor invoice awaiting review and payment",
+        "fields": [
+          {
+            "name": "id",
+            "type": "string",
+            "required": true,
+            "description": "Primary key UUID"
+          },
+          {
+            "name": "vendor_id",
+            "type": "ref:Vendor",
+            "required": true
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "required": true
+          },
+          {
+            "name": "currency",
+            "type": "string",
+            "required": true,
+            "default": "USD"
+          },
+          {
+            "name": "cost_center",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "status",
+            "type": "enum",
+            "values": [
+              "submitted",
+              "under_review",
+              "approved",
+              "rejected",
+              "paid"
+            ],
+            "required": true,
+            "default": "submitted"
+          },
+          {
+            "name": "ai_budget_flag",
+            "type": "string",
+            "description": "AI-flagged budget/duplicate/policy risk note"
+          },
+          {
+            "name": "approval_note",
+            "type": "text"
+          },
+          {
+            "name": "created_at",
+            "type": "date",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "from": "Invoice",
+        "field": "vendor_id",
+        "to": "Vendor",
+        "cardinality": "many-to-one"
+      }
+    ],
+    "roles": [
+      {
+        "name": "ap_clerk",
+        "displayName": "Accounts Payable Clerk",
+        "description": "Enters and submits vendor invoices for review.",
+        "permissions": [
+          "create:Invoice own",
+          "read:Invoice own",
+          "read:Vendor all",
+          "create:Vendor own"
+        ],
+        "userPersona": {
+          "name": "Wei Zhang",
+          "email": "wei.zhang@floe.internal",
+          "password": "WeiFinance#2026",
+          "roleTitle": "Accounts Payable Clerk",
+          "department": "Finance Operations",
+          "avatar": "WZ"
+        }
+      },
+      {
+        "name": "finance_manager",
+        "displayName": "Finance Manager",
+        "description": "Reviews and approves invoices within budget thresholds.",
+        "permissions": [
+          "read:Invoice all",
+          "update:Invoice.status all",
+          "read:Vendor all"
+        ],
+        "userPersona": {
+          "name": "Sophia Sterling",
+          "email": "sophia.sterling.finance@floe.internal",
+          "password": "SophiaFinance!2026",
+          "roleTitle": "Finance Manager",
+          "department": "Finance",
+          "avatar": "SS"
+        }
+      },
+      {
+        "name": "admin",
+        "displayName": "System Admin / CISO",
+        "description": "Chief Information Security Officer. Database DDL access, audit trails, and platform governance.",
+        "permissions": [
+          "read:all",
+          "update:all",
+          "admin:ddl",
+          "admin:audit"
+        ],
+        "userPersona": {
+          "name": "Elena Rostova",
+          "email": "elena.rostova@floe.internal",
+          "password": "AdminElena!2026",
+          "roleTitle": "Chief Information Security Officer (CISO)",
+          "department": "InfoSec & Infrastructure",
+          "avatar": "ER"
+        }
+      }
+    ],
+    "workflows": [
+      {
+        "name": "review_invoice",
+        "description": "Budget and duplicate check, then manager approval before scheduling payment",
+        "trigger": "AP clerk submits invoice",
+        "nodes": [
+          {
+            "id": "s1",
+            "type": "action",
+            "execution_mode": "ai",
+            "action": "check_budget_and_duplicates",
+            "label": "AI Budget & Duplicate Check",
+            "goal": "Flag invoices exceeding cost-center budget or matching a recent duplicate submission",
+            "scope": "Read-only context analysis, outputs ai_budget_flag to context"
+          },
+          {
+            "id": "s2",
+            "type": "human",
+            "execution_mode": "human",
+            "action": "finance_manager_approval",
+            "label": "Finance Manager Approval",
+            "role": "finance_manager",
+            "timeout": "48h",
+            "on_timeout": "escalate_to_manager"
+          },
+          {
+            "id": "s3",
+            "type": "action",
+            "execution_mode": "deterministic",
+            "action": "apply_decision",
+            "label": "Update Status",
+            "mutations": [
+              {
+                "target": "Invoice.status",
+                "set": "$context.inputs.action"
+              }
+            ]
+          },
+          {
+            "id": "approved",
+            "type": "terminal",
+            "execution_mode": "deterministic",
+            "action": "terminal_approved",
+            "label": "Invoice Approved",
+            "outcome": "approved"
+          },
+          {
+            "id": "rejected",
+            "type": "terminal",
+            "execution_mode": "deterministic",
+            "action": "terminal_rejected",
+            "label": "Invoice Rejected",
+            "outcome": "rejected"
+          }
+        ],
+        "edges": [
+          {
+            "from": "s1",
+            "to": "s2",
+            "label": "Checked"
+          },
+          {
+            "from": "s2",
+            "to": "s3",
+            "condition": "approve",
+            "label": "Approved"
+          },
+          {
+            "from": "s2",
+            "to": "rejected",
+            "condition": "reject",
+            "label": "Rejected"
+          },
+          {
+            "from": "s3",
+            "to": "approved",
+            "label": "Applied"
+          }
+        ]
+      }
+    ],
+    "integrations": [
+      {
+        "type": "email",
+        "purpose": "Notify AP clerk and finance manager on submission and decision"
+      }
+    ],
+    "deployment": {
+      "target_options": [
+        "local",
+        "cloud_paas",
+        "on_prem"
+      ],
+      "default": "cloud_paas",
+      "containerization": "docker-compose",
+      "health_check": {
+        "path": "/api/health",
+        "port": 4000,
+        "timeout_seconds": 30,
+        "expected_status": 200
+      },
+      "network": {
+        "internal_only_db": true,
+        "reverse_proxy": true
+      }
+    },
+    "logo": "🏢",
+    "requirement_profile": {
+      "user_count_bracket": "51-250",
+      "total_registered_users": 250,
+      "concurrent_users": 30,
+      "growth_12_months_users": 500,
+      "growth_multiple": 2,
+      "criticality": "dev_demo",
+      "data_sensitivity": "confidential",
+      "geographic_reach": "india",
+      "availability": "several_hours",
+      "internal_vs_external": "internal_only",
+      "cloud_provider_preference": "aws"
+    },
+    "architecture_plan": {
+      "domain": "finance-invoice-approval",
+      "app_name": "Enterprise Finance & Invoice Approval Hub",
+      "requirement_profile": {
+        "user_count_bracket": "51-250",
+        "total_registered_users": 250,
+        "concurrent_users": 30,
+        "growth_12_months_users": 500,
+        "growth_multiple": 2,
+        "criticality": "dev_demo",
+        "data_sensitivity": "confidential",
+        "geographic_reach": "india",
+        "availability": "several_hours",
+        "internal_vs_external": "internal_only",
+        "cloud_provider_preference": "aws"
+      },
+      "recommended_database": {
+        "engine": "postgresql",
+        "version": "15-alpine",
+        "reason": [
+          "Transactional business data with relational entity integrity",
+          "Strong ACID consistency for state machine transitions",
+          "Rich JSONB support for unstructured notes & metadata",
+          "Zero license cost (PostgreSQL Community Open-Source)"
+        ]
+      },
+      "recommended_target": "on_prem",
+      "recommendation_rationale": {
+        "headline": "Recommended: Enterprise On-Premises Server",
+        "summary": "Your application stores confidential records for 250 internal users and requires strict network containment behind your corporate firewall.",
+        "reasons": [
+          "Complete data sovereignty with zero external internet or cloud egress exposure",
+          "Leverages internal bare-metal/VM compute with no per-user cloud license tax",
+          "Direct integration with internal LDAP and corporate syslog monitoring"
+        ],
+        "trade_off": "Requires internal IT maintenance and manual storage expansion monitoring.",
+        "why_not_alternatives": {
+          "on_prem": "Currently selected as primary recommendation.",
+          "aws": "Incurs monthly cloud subscription fees when your internal host satisfies data residency requirements.",
+          "azure": "AWS provides slightly lower baseline cost in India region, though Azure remains a viable enterprise alternative.",
+          "gcp": "GCP Cloud Run is highly elastic, though AWS RDS offers broader managed ecosystem alignment for your team."
+        }
+      },
+      "profiles": {
+        "on_prem": {
+          "target_key": "on_prem",
+          "display_name": "Enterprise On-Premises Server",
+          "subtitle": "Dedicated internal server behind company firewall",
+          "badge": "⭐ Recommended for Sensitive Data",
+          "is_recommended": true,
+          "why_recommended_bullet": "Full data residency compliance for confidential records, utilizing existing corporate compute.",
+          "why_not_bullet": "Requires in-house DevOps maintenance and lacks managed cloud multi-AZ elasticity.",
+          "estimated_monthly_cost_inr": {
+            "min": 800,
+            "max": 1500,
+            "nominal": 1250
+          },
+          "tco_monthly_inr": 3200,
+          "compute_spec": {
+            "vCpu": 4,
+            "ram_gb": 16,
+            "instances": 1,
+            "description": "Dedicated Linux/VM Hypervisor host on internal LAN"
+          },
+          "database_spec": {
+            "engine": "postgresql",
+            "tier": "Self-Hosted PostgreSQL 15 Cluster",
+            "ram_gb": 8,
+            "storage_gb": 100,
+            "high_availability": false,
+            "license_cost_inr": 0
+          },
+          "storage_spec": {
+            "disk_gb": 100,
+            "backup_retention_days": 30
+          },
+          "breakdown": [
+            {
+              "component": "Compute",
+              "name": "Existing Linux Bare-Metal/VM",
+              "spec": "4 vCPU, 16 GB RAM allocated",
+              "monthly_cost_inr": 0,
+              "is_free_included": true
+            },
+            {
+              "component": "Database",
+              "name": "PostgreSQL 15 Community Container",
+              "spec": "Self-hosted with WAL archiving",
+              "monthly_cost_inr": 0,
+              "is_free_included": true
+            },
+            {
+              "component": "Network & Proxy",
+              "name": "Nginx Reverse Proxy / HAProxy",
+              "spec": "SSL Termination & Rate limiting",
+              "monthly_cost_inr": 0,
+              "is_free_included": true
+            },
+            {
+              "component": "Storage & NAS",
+              "name": "SAN/NAS Mount for Backups",
+              "spec": "100 GB SSD volume",
+              "monthly_cost_inr": 500
+            },
+            {
+              "component": "Admin & Maintenance",
+              "name": "Team Operational Overhead",
+              "spec": "Estimated patch/backup admin time",
+              "monthly_cost_inr": 750
+            }
+          ],
+          "benefits": [
+            "Zero external cloud egress or public exposure",
+            "No recurring per-core or license subscription fees",
+            "Direct integration with internal LDAP/Active Directory",
+            "Strict corporate data residency compliance"
+          ],
+          "limitations": [
+            "Internal hardware provisioning and network routing needed",
+            "Team must monitor disk capacity and hardware wear"
+          ],
+          "assumptions": {
+            "registered_users": 250,
+            "concurrent_users": 30,
+            "monthly_requests": "~15,00,000",
+            "storage_gb": 100,
+            "backup_frequency": "Daily automated NAS backup",
+            "region": "Corporate Datacenter / Mumbai"
+          }
+        },
+        "aws": {
+          "target_key": "aws",
+          "display_name": "Amazon Web Services (AWS)",
+          "subtitle": "Managed ECS Fargate + Amazon RDS PostgreSQL 15",
+          "badge": "Enterprise Standard",
+          "is_recommended": false,
+          "why_recommended_bullet": "Elastic container scaling, managed Aurora HA failover, and high Indian datacenter footprint.",
+          "why_not_bullet": "Higher variable network egress and multi-AZ database monthly commitment.",
+          "estimated_monthly_cost_inr": {
+            "min": 5228,
+            "max": 7995,
+            "nominal": 6150
+          },
+          "tco_monthly_inr": 8303,
+          "compute_spec": {
+            "vCpu": 2,
+            "ram_gb": 4,
+            "instances": 1,
+            "description": "AWS Fargate serverless containers running in ap-south-1 (Mumbai)"
+          },
+          "database_spec": {
+            "engine": "postgresql",
+            "tier": "Amazon RDS PostgreSQL Single-AZ",
+            "ram_gb": 8,
+            "storage_gb": 100,
+            "high_availability": false,
+            "license_cost_inr": 0
+          },
+          "storage_spec": {
+            "disk_gb": 100,
+            "backup_retention_days": 30
+          },
+          "breakdown": [
+            {
+              "component": "Container Compute",
+              "name": "AWS Fargate / ECS Container Service",
+              "spec": "2 vCPU, 4 GB RAM (Auto-scaling 1-4 tasks)",
+              "monthly_cost_inr": 2100
+            },
+            {
+              "component": "Managed Database",
+              "name": "Amazon RDS PostgreSQL 15 (Single-AZ)",
+              "spec": "8 GB RAM, db.t4g.medium, gp3 SSD",
+              "monthly_cost_inr": 1400
+            },
+            {
+              "component": "Object & Backup Storage",
+              "name": "Amazon S3 Standard + Automated Snapshots",
+              "spec": "100 GB encrypted volume, 30-day retention",
+              "monthly_cost_inr": 350
+            },
+            {
+              "component": "Networking & Routing",
+              "name": "AWS Application Load Balancer (ALB) + Route 53",
+              "spec": "SSL termination, HTTP/2, health probe checks",
+              "monthly_cost_inr": 1850
+            },
+            {
+              "component": "Observability & Security",
+              "name": "AWS CloudWatch Metrics & AWS Secrets Manager",
+              "spec": "Log aggregation, alarms, automated secret rotation",
+              "monthly_cost_inr": 450
+            }
+          ],
+          "benefits": [
+            "99.95% SLA with automated Aurora failover",
+            "Serverless compute scales to zero during off-peak hours",
+            "Direct VPC private networking between API and Database",
+            "Native KMS encryption at rest and in transit"
+          ],
+          "limitations": [
+            "Monthly recurring AWS bill required",
+            "Requires IAM permission boundary governance"
+          ],
+          "assumptions": {
+            "registered_users": 250,
+            "concurrent_users": 30,
+            "monthly_requests": "~15,00,000",
+            "storage_gb": 100,
+            "backup_frequency": "Daily automated snapshot with point-in-time recovery",
+            "region": "AWS ap-south-1 (Mumbai, India)"
+          }
+        },
+        "azure": {
+          "target_key": "azure",
+          "display_name": "Microsoft Azure Cloud",
+          "subtitle": "Azure Container Apps + Azure Database for PostgreSQL",
+          "badge": "Enterprise Cloud",
+          "is_recommended": false,
+          "why_recommended_bullet": "Seamless enterprise Active Directory (Entra ID) single sign-on integration and Central India residency.",
+          "why_not_bullet": "Slightly higher cold-start container latency during cold scale-up.",
+          "estimated_monthly_cost_inr": {
+            "min": 4905,
+            "max": 7386,
+            "nominal": 5770
+          },
+          "tco_monthly_inr": 7616,
+          "compute_spec": {
+            "vCpu": 2,
+            "ram_gb": 4,
+            "instances": 1,
+            "description": "Azure Container Apps in Central India (Pune)"
+          },
+          "database_spec": {
+            "engine": "postgresql",
+            "tier": "Azure PostgreSQL Flexible Server (General Purpose)",
+            "ram_gb": 8,
+            "storage_gb": 100,
+            "high_availability": false,
+            "license_cost_inr": 0
+          },
+          "storage_spec": {
+            "disk_gb": 100,
+            "backup_retention_days": 30
+          },
+          "breakdown": [
+            {
+              "component": "Container Apps",
+              "name": "Azure Container Apps (Serverless Microservices)",
+              "spec": "2 vCPU, 4 GB RAM, Dapr enabled",
+              "monthly_cost_inr": 1950
+            },
+            {
+              "component": "Managed PostgreSQL",
+              "name": "Azure Database for PostgreSQL Flexible Server",
+              "spec": "General Purpose D2ds_v5, 8 GB RAM, Zone-redundant HA",
+              "monthly_cost_inr": 1350
+            },
+            {
+              "component": "Storage & Blob",
+              "name": "Azure Blob Storage (Hot Tier) + Backup Vault",
+              "spec": "100 GB ZRS replication",
+              "monthly_cost_inr": 320
+            },
+            {
+              "component": "Network & Ingress",
+              "name": "Azure Front Door / Container App Ingress",
+              "spec": "Built-in HTTPS TLS 1.3 certificate management",
+              "monthly_cost_inr": 1750
+            },
+            {
+              "component": "Monitoring & Key Vault",
+              "name": "Azure Monitor Log Analytics & Azure Key Vault",
+              "spec": "Application Insights telemetry and hardware secrets",
+              "monthly_cost_inr": 400
+            }
+          ],
+          "benefits": [
+            "Deep single sign-on with corporate Microsoft Entra ID",
+            "PostgreSQL Flexible Server with maintenance window controls",
+            "Native integration with Power BI and Azure Synapse",
+            "Central India (Pune) & South India (Chennai) compliance"
+          ],
+          "limitations": [
+            "Requires Azure Subscription setup and Resource Group management"
+          ],
+          "assumptions": {
+            "registered_users": 250,
+            "concurrent_users": 30,
+            "monthly_requests": "~15,00,000",
+            "storage_gb": 100,
+            "backup_frequency": "Daily geo-redundant snapshot",
+            "region": "Azure Central India (Pune)"
+          }
+        },
+        "gcp": {
+          "target_key": "gcp",
+          "display_name": "Google Cloud Platform (GCP)",
+          "subtitle": "Google Cloud Run + Cloud SQL for PostgreSQL 15",
+          "badge": "Developer Favorite",
+          "is_recommended": false,
+          "why_recommended_bullet": "Fastest container cold start times on Cloud Run with high developer velocity and Google global network.",
+          "why_not_bullet": "Requires GCP project and service account permission provisioning.",
+          "estimated_monthly_cost_inr": {
+            "min": 4548,
+            "max": 6688,
+            "nominal": 5350
+          },
+          "tco_monthly_inr": 6955,
+          "compute_spec": {
+            "vCpu": 2,
+            "ram_gb": 4,
+            "instances": 1,
+            "description": "Google Cloud Run in asia-south1 (Mumbai)"
+          },
+          "database_spec": {
+            "engine": "postgresql",
+            "tier": "Cloud SQL for PostgreSQL 15 Enterprise Edition",
+            "ram_gb": 8,
+            "storage_gb": 100,
+            "high_availability": false,
+            "license_cost_inr": 0
+          },
+          "storage_spec": {
+            "disk_gb": 100,
+            "backup_retention_days": 30
+          },
+          "breakdown": [
+            {
+              "component": "Serverless Compute",
+              "name": "Google Cloud Run (Fully Managed)",
+              "spec": "2 vCPU, 4 GB RAM, fast scale-to-zero",
+              "monthly_cost_inr": 1800
+            },
+            {
+              "component": "Managed PostgreSQL",
+              "name": "Cloud SQL for PostgreSQL 15 Enterprise",
+              "spec": "db-custom-2-8, High Availability Regional",
+              "monthly_cost_inr": 1300
+            },
+            {
+              "component": "Cloud Storage",
+              "name": "Google Cloud Storage (Standard Dual-Region)",
+              "spec": "100 GB bucket with object versioning",
+              "monthly_cost_inr": 300
+            },
+            {
+              "component": "Cloud Load Balancing",
+              "name": "Global External HTTPS Cloud Load Balancer",
+              "spec": "Google Cloud Armor DDoS and WAF protection",
+              "monthly_cost_inr": 1600
+            },
+            {
+              "component": "Cloud Logging & Trace",
+              "name": "Google Cloud Operations Suite & Secret Manager",
+              "spec": "Structured JSON log streaming and trace metrics",
+              "monthly_cost_inr": 350
+            }
+          ],
+          "benefits": [
+            "Sub-second container startup and zero maintenance overhead",
+            "Automatic SSL and custom domain mapping included",
+            "Cloud SQL automatic backup and maintenance patching",
+            "India Mumbai & Delhi region data sovereignty"
+          ],
+          "limitations": [
+            "Cloud SQL regional HA doubles database instance base rate"
+          ],
+          "assumptions": {
+            "registered_users": 250,
+            "concurrent_users": 30,
+            "monthly_requests": "~15,00,000",
+            "storage_gb": 100,
+            "backup_frequency": "Daily automated Cloud SQL backup",
+            "region": "GCP asia-south1 (Mumbai)"
+          }
+        }
+      },
+      "selected_target": "on_prem"
+    }
+  }
+}
