@@ -6,8 +6,8 @@ import {
 import { FloeStudioUser } from '../types/auth';
 
 interface NavbarProps {
-  currentView: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login' | 'app_login';
-  onNavigate: (view: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login' | 'app_login') => void;
+  currentView: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login';
+  onNavigate: (view: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login') => void;
   onOpenAuditLogs: () => void;
   onOpenUiSuggestions: () => void;
   onOpenHowItWorks: () => void;

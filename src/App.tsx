@@ -20,7 +20,6 @@ import { AppDetailView } from './components/AppDetailView';
 import { StandaloneTestbed } from './components/StandaloneTestbed';
 import { LiveAppSandbox } from './components/LiveAppSandbox';
 import { FloePlatformLogin } from './components/auth/FloePlatformLogin';
-import { AppLoginScreen } from './components/auth/AppLoginScreen';
 import { AuditLogModal } from './components/AuditLogModal';
 import { UiSuggestionsModal } from './components/UiSuggestionsModal';
 import { HowItWorksModal } from './components/HowItWorksModal';
@@ -108,7 +107,7 @@ export function resolveIrForTarget(targetDomain?: string | null, customIr?: Inte
 export default function App() {
   // Helper to determine initial view and active IR based on URL params / subdomain / hostname
   const getInitialViewAndIr = (): { 
-    view: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login' | 'app_login', 
+    view: 'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login', 
     ir: IntermediateRepresentation 
   } => {
     if (typeof window !== 'undefined') {
@@ -179,7 +178,7 @@ export default function App() {
   };
 
   const initialSetup = getInitialViewAndIr();
-  const [currentView, setCurrentView] = useState<'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login' | 'app_login'>(initialSetup.view);
+  const [currentView, setCurrentView] = useState<'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login'>(initialSetup.view);
   
   // Usability mode: Friendly Mode (default) vs Developer Mode
   const [isDevMode, setIsDevMode] = useState<boolean>(false);
@@ -213,7 +212,7 @@ export default function App() {
 
   // Check URL parameters & Hostname changes dynamically & fetch server app config
   useEffect(() => {
-    // Do not run if generation already completed — we want to stay on app_login.
+    // Do not run if generation already completed — we want to stay on standalone_testbed.
     if (postGenerationRef.current) return;
 
     const initApp = async () => {
@@ -449,7 +448,7 @@ export default function App() {
 
   const handleGenerationComplete = () => {
     // Lock the boot useEffect so it cannot race against this transition and
-    // overwrite our intended view (app_login) with standalone_testbed or login.
+    // overwrite our intended view (standalone_testbed) with login.
     postGenerationRef.current = true;
 
     if (typeof window !== 'undefined') {
@@ -516,11 +515,9 @@ export default function App() {
     };
     setAgentExecutions(prev => [newExec, ...prev]);
 
-    // After generation completes, take the user directly to the app's login
-    // page so they can experience it immediately.  The login view is the
-    // entry-point for the generated app's RBAC system (AppLoginScreen) and
-    // is the natural next step after "Build App" is approved.
-    setCurrentView('app_login');
+    // After generation completes, take the user directly into the live app
+    // testbed so they can immediately interact with the running application.
+    setCurrentView('standalone_testbed');
   };
 
   const handleSelectApp = (app: FloeApp) => {
@@ -557,22 +554,6 @@ export default function App() {
             window.history.pushState({}, '', window.location.pathname);
           }
           setCurrentView(currentUser ? 'dashboard' : 'login');
-        }}
-      />
-    );
-  }
-
-  // After app generation: show the generated app's role-based login screen so
-  // the user can immediately try the app as any of its configured personas.
-  if (currentView === 'app_login') {
-    const appIr = selectedApp?.ir || candidateIr;
-    return (
-      <AppLoginScreen
-        ir={appIr}
-        appName={selectedApp?.name || appIr.name}
-        onLoginSuccess={(appUser) => {
-          // Transition into the live app sandbox as the chosen app user
-          setCurrentView('standalone_testbed');
         }}
       />
     );
