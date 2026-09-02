@@ -39,6 +39,9 @@ interface GitHubSyncModalProps {
   onSuccess?: () => void;
   activeDomain?: string;
   pendingApproval?: boolean;
+  customerName?: string;
+  appName?: string;
+  initialError?: string;
 }
 
 interface RepoStatus {
@@ -71,14 +74,17 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
   onClose, 
   onSuccess,
   activeDomain,
-  pendingApproval: _pendingApproval
+  pendingApproval = false,
+  customerName: initialCustomerName,
+  appName: initialAppName,
+  initialError
 }) => {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
   const [patToken, setPatToken] = useState('');
   
   // Customer & Repo Configuration State
-  const [customerName, setCustomerName] = useState('Acme Corp');
-  const [appName, setAppName] = useState('Finance Invoice Approval');
+  const [customerName, setCustomerName] = useState(initialCustomerName || 'Acme Corp');
+  const [appName, setAppName] = useState(initialAppName || 'Finance Invoice Approval');
   const [selectedOwner, setSelectedOwner] = useState('gauravgithub0404');
   const [repoMode, setRepoMode] = useState<'customer_new' | 'existing'>('customer_new');
   const [customRepoName, setCustomRepoName] = useState('');
@@ -87,6 +93,11 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
   const [autoPushEnabled, setAutoPushEnabled] = useState(true);
   const [commitMessage, setCommitMessage] = useState('');
   
+  // Render Connection State
+  const [renderApiKey, setRenderApiKey] = useState('');
+  const [renderStatus, setRenderStatus] = useState<{ connected: boolean; servicesCount?: number; postgresCount?: number; error?: string } | null>(null);
+  const [isTestingRender, setIsTestingRender] = useState(false);
+
   // GitHub User info
   const [gitHubUser, setGitHubUser] = useState<GitHubUser | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState(false);
@@ -117,30 +128,61 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
   const fetchGitHubUser = async (token: string) => {
     if (!token) return;
     setIsLoadingUser(true);
+    console.log('[Floe:GitHubSyncModal] Verifying GitHub user with token...');
     try {
       const res = await fetch(`/api/github/user?token=${encodeURIComponent(token)}`);
       const data = await res.json();
       if (data.authenticated) {
+        console.info('[Floe:GitHubSyncModal] Authenticated as:', data.login, data.name);
         setGitHubUser(data);
         if (!selectedOwner || selectedOwner === 'gauravgithub0404') {
           setSelectedOwner(data.login);
         }
+      } else {
+        console.warn('[Floe:GitHubSyncModal] GitHub token verification returned unauthenticated:', data.error);
       }
     } catch (e) {
-      console.warn('[GitHub Modal] Could not fetch user:', e);
+      console.warn('[Floe:GitHubModal] Could not fetch user:', e);
     } finally {
       setIsLoadingUser(false);
+    }
+  };
+
+  const fetchRenderStatus = async () => {
+    setIsTestingRender(true);
+    console.log('[Floe:GitHubSyncModal] Checking Render Cloud connectivity...');
+    try {
+      const res = await fetch('/api/render/status');
+      const data = await res.json();
+      console.info('[Floe:GitHubSyncModal] Render status:', data);
+      setRenderStatus({
+        connected: Boolean(data.valid || data.apiKeyPresent),
+        servicesCount: data.servicesCount || 0,
+        postgresCount: data.postgresCount || 0,
+        error: data.error
+      });
+    } catch (err: any) {
+      console.warn('[Floe:GitHubSyncModal] Render status check error:', err.message);
+      setRenderStatus({
+        connected: false,
+        error: err.message || 'Could not connect to Render API'
+      });
+    } finally {
+      setIsTestingRender(false);
     }
   };
 
   const fetchRepoStatus = async () => {
     setIsLoading(true);
     setSyncResult(null);
+    console.log('[Floe:GitHubSyncModal] Checking repo status for:', activeTargetRepo);
     try {
       const res = await fetch(`/api/github/status?repo=${encodeURIComponent(activeTargetRepo)}&branch=${encodeURIComponent(targetBranch)}&token=${encodeURIComponent(patToken)}`);
       const data = await res.json();
+      console.info('[Floe:GitHubSyncModal] Repo status response:', data);
       setRepoStatus(data);
     } catch (err: any) {
+      console.error('[Floe:GitHubSyncModal] Repo status error:', err);
       setRepoStatus({
         connected: false,
         repo: activeTargetRepo,
@@ -155,20 +197,27 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      console.info('[Floe:GitHubSyncModal] Opened modal. Loading stored credentials...');
       // Auto-load saved settings from localStorage
       const savedToken = localStorage.getItem('floe_github_pat') || '';
-      const savedCustomer = localStorage.getItem('floe_customer_name') || 'Acme Corp';
+      const savedCustomer = initialCustomerName || localStorage.getItem('floe_customer_name') || 'Acme Corp';
+      const savedAppName = initialAppName || localStorage.getItem('floe_app_name') || 'Finance Invoice Approval';
       const savedOwner = localStorage.getItem('floe_github_owner') || 'gauravgithub0404';
       const savedRepo = localStorage.getItem('floe_github_repo') || '';
       const savedBranch = localStorage.getItem('floe_github_branch') || 'main';
       const savedAutoPush = localStorage.getItem('floe_auto_git_push_enabled') !== 'false';
       const savedMode = (localStorage.getItem('floe_repo_mode') as 'customer_new' | 'existing') || 'customer_new';
+      const savedRenderKey = localStorage.getItem('floe_render_api_key') || '';
 
       if (savedToken) {
         setPatToken(savedToken);
         fetchGitHubUser(savedToken);
       }
+      if (savedRenderKey) {
+        setRenderApiKey(savedRenderKey);
+      }
       setCustomerName(savedCustomer);
+      setAppName(savedAppName);
       setSelectedOwner(savedOwner);
       if (savedRepo) setCustomRepoName(savedRepo.includes('/') ? savedRepo.split('/')[1] : savedRepo);
       setTargetBranch(savedBranch);
@@ -177,6 +226,7 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
       setCommitMessage(`feat(floe): auto-generate customer application for ${savedCustomer}`);
 
       fetchRepoStatus();
+      fetchRenderStatus();
     }
   }, [isOpen]);
 
@@ -391,6 +441,31 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
         {/* Modal Body Scrollable */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
           
+          {/* Diagnostic Initial Error Alert */}
+          {initialError && (
+            <div className="p-3.5 rounded-xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-start gap-3 shadow-lg">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-rose-100">Connection / Configuration Notice:</p>
+                <p className="text-rose-200/90 leading-relaxed">{initialError}</p>
+                <p className="text-[11px] text-rose-300/80">Please verify your GitHub Personal Access Token or cloud settings below to proceed.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Pending Approval Guide Banner */}
+          {pendingApproval && !initialError && (
+            <div className="p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-700/60 text-indigo-200 text-xs flex items-start gap-3">
+              <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-bold text-white">App Ready to Build & Deploy</p>
+                <p className="text-indigo-200 text-[11px] leading-relaxed">
+                  Enter or verify your GitHub Token below to auto-create the dedicated customer repo <code className="bg-indigo-900/60 px-1 py-0.5 rounded text-indigo-100">{activeTargetRepo}</code> and start building.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* PAT Token Configuration & User Banner */}
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
             <div className="flex items-center justify-between">
@@ -582,6 +657,58 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({
                 <span>Render Auto-Deploy</span>
               </div>
             </div>
+          </div>
+
+          {/* Render Cloud Deployment Configuration */}
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Render Cloud Configuration & API Key</span>
+              </label>
+              <button
+                type="button"
+                onClick={fetchRenderStatus}
+                disabled={isTestingRender}
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-medium disabled:opacity-50"
+              >
+                <RefreshCw className={`w-2.5 h-2.5 ${isTestingRender ? 'animate-spin' : ''}`} />
+                <span>Test Render Connection</span>
+              </button>
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={renderApiKey}
+                onChange={(e) => {
+                  setRenderApiKey(e.target.value);
+                  localStorage.setItem('floe_render_api_key', e.target.value.trim());
+                }}
+                placeholder="rnd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (Optional if configured in environment)"
+                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-hidden focus:border-emerald-500 font-mono"
+              />
+            </div>
+
+            {renderStatus && (
+              <div className={`flex items-center justify-between text-xs p-2.5 rounded-lg border ${
+                renderStatus.connected 
+                  ? 'bg-emerald-950/40 border-emerald-800/40 text-emerald-200'
+                  : 'bg-amber-950/40 border-amber-800/40 text-amber-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${renderStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  <span>
+                    {renderStatus.connected
+                      ? `Render Cloud Connected (${renderStatus.servicesCount || 0} active web services, ${renderStatus.postgresCount || 0} databases)`
+                      : (renderStatus.error || 'Render API key not detected or limited access.')}
+                  </span>
+                </div>
+                <span className={`text-[10px] font-bold ${renderStatus.connected ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {renderStatus.connected ? 'Ready for Auto-Deploy' : 'Optional'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Download ZIP Banner */}

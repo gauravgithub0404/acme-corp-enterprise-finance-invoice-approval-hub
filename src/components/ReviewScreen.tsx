@@ -30,6 +30,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
   const [jsonText, setJsonText] = useState(JSON.stringify(ir, null, 2));
   const [isBrandingModalOpen, setIsBrandingModalOpen] = useState(false);
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
+  const [gitHubModalInitialError, setGitHubModalInitialError] = useState<string | undefined>(undefined);
   const [isApproving, setIsApproving] = useState(false);
   const [repoStatus, setRepoStatus] = useState<'idle' | 'pushing' | 'done' | 'error'>('idle');
   // Holds the finalised IR while waiting for the GitHub modal to collect a PAT
@@ -107,6 +108,13 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     const owner   = typeof window !== 'undefined' ? localStorage.getItem('floe_github_owner') || defaultOwner : defaultOwner;
     const branch  = typeof window !== 'undefined' ? localStorage.getItem('floe_github_branch') || 'main' : 'main';
     const customer = typeof window !== 'undefined' ? localStorage.getItem('floe_customer_name') || customerName : customerName;
+    const repoName = `${sanitizeSlug(customer)}-${sanitizeSlug(ir.name || ir.domain || 'app')}`;
+
+    console.group('[Floe:ReviewScreen:proceedWithBuild]');
+    console.info('Starting build for IR:', ir.domain, ir.name);
+    console.info('Target Customer Repo:', `${owner}/${repoName} (${branch})`);
+    console.info('GitHub Token present:', Boolean(token));
+    console.groupEnd();
 
     if (token) {
       setRepoStatus('pushing');
@@ -117,7 +125,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
           customerName: customer,
           appName: ir.name || ir.domain,
           owner,
-          repo: `${sanitizeSlug(customer)}-${sanitizeSlug(ir.name || ir.domain || 'app')}`,
+          repo: repoName,
           branch,
           token,
           isPrivate: false,
@@ -127,15 +135,32 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         })
       })
         .then(r => r.json())
-        .then(data => setRepoStatus(data.success ? 'done' : 'error'))
-        .catch(() => setRepoStatus('error'));
+        .then(data => {
+          console.info('[Floe:ReviewScreen] Background GitHub sync result:', data);
+          setRepoStatus(data.success ? 'done' : 'error');
+          if (!data.success) {
+            console.warn('[Floe:ReviewScreen] GitHub push notice:', data.error);
+          }
+        })
+        .catch((err) => {
+          console.error('[Floe:ReviewScreen] Background GitHub push network error:', err);
+          setRepoStatus('error');
+        });
     }
 
     setPendingBuildIr(null);
+    setGitHubModalInitialError(undefined);
     onConfirmBuild(ir);
   };
 
   const handleBuild = () => {
+    console.group('[Floe:ReviewScreen:handleBuild] "Approve, Create Customer Repo & Build App" Clicked');
+    console.info('App Name:', currentIr.name);
+    console.info('Domain:', currentIr.domain);
+    console.info('Customer Name:', customerName);
+    console.info('Selected Target:', selectedTarget);
+    console.groupEnd();
+
     const updatedIr: IntermediateRepresentation = {
       ...currentIr,
       requirement_profile: plan.requirement_profile,
@@ -145,9 +170,9 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     const savedToken = typeof window !== 'undefined' ? localStorage.getItem('floe_github_pat') || '' : '';
 
     if (!savedToken) {
-      // No PAT configured — store the IR and open the GitHub config modal so
-      // the user can enter credentials before the build starts.
+      console.warn('[Floe:ReviewScreen] No GitHub PAT configured in storage. Opening GitHub & Cloud Sync Modal.');
       setPendingBuildIr(updatedIr);
+      setGitHubModalInitialError('GitHub Personal Access Token is required to automatically create the customer repository on your GitHub account and trigger deployments.');
       setIsApproving(false);
       setIsGitHubModalOpen(true);
       return;
@@ -1038,6 +1063,10 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       <GitHubSyncModal
         isOpen={isGitHubModalOpen}
         pendingApproval={Boolean(pendingBuildIr)}
+        customerName={customerName}
+        appName={currentIr.name || currentIr.domain}
+        initialError={gitHubModalInitialError}
+        activeDomain={currentIr.domain}
         onClose={() => {
           setIsGitHubModalOpen(false);
           // If opened as part of the approve flow, check if a PAT was saved.
@@ -1049,7 +1078,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               setIsApproving(true);
               proceedWithBuild(pendingBuildIr);
             } else {
-              // User closed without saving a token — cancel pending build
+              // User closed without saving a token — still allow them to proceed
               setPendingBuildIr(null);
             }
           }

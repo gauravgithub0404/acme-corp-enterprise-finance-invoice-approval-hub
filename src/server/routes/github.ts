@@ -95,18 +95,24 @@ router.post('/sync-push', async (req, res) => {
     const fullRepoPath = `${targetOwner}/${targetRepoName}`;
     let createdNewRepo = false;
 
+    console.info(`[Server:GitHub:sync-push] Target: ${fullRepoPath} (branch: ${branch}) | Customer: ${customerName} | App: ${appName}`);
+
     const checkRepoRes = await fetch(`https://api.github.com/repos/${fullRepoPath}`, { headers });
     if (!checkRepoRes.ok && checkRepoRes.status === 404 && createRepoIfMissing) {
+      console.info(`[Server:GitHub:sync-push] Repo ${fullRepoPath} does not exist. Creating new customer repo...`);
       const isUserRepo = targetOwner.toLowerCase() === authLogin.toLowerCase();
       const createRepoUrl = isUserRepo ? 'https://api.github.com/user/repos' : `https://api.github.com/orgs/${targetOwner}/repos`;
       const createRes = await fetch(createRepoUrl, { method: 'POST', headers, body: JSON.stringify({ name: targetRepoName, description: customerName ? `Floe generated app for ${customerName}` : `Floe generated app`, private: Boolean(isPrivate), auto_init: true }) });
       if (!createRes.ok) {
         const createErr = await createRes.text();
+        console.error(`[Server:GitHub:sync-push] Failed to create repo ${fullRepoPath}:`, createErr);
         return res.status(400).json({ success: false, error: `Failed to create repository "${fullRepoPath}": ${createErr}` });
       }
       createdNewRepo = true;
+      console.info(`[Server:GitHub:sync-push] Successfully created repository ${fullRepoPath}. Waiting for initialization...`);
       await new Promise(r => setTimeout(r, 1500));
     } else if (!checkRepoRes.ok && checkRepoRes.status === 404) {
+      console.warn(`[Server:GitHub:sync-push] Repo ${fullRepoPath} not found and auto-creation was disabled.`);
       return res.status(404).json({ success: false, error: `Repository ${fullRepoPath} not found and auto-creation was disabled.` });
     }
 

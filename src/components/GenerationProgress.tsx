@@ -20,8 +20,10 @@ import {
   FolderGit2,
   Building2,
   GitBranch,
-  Play
+  Play,
+  Settings
 } from 'lucide-react';
+import { GitHubSyncModal } from './GitHubSyncModal';
 
 interface GenerationProgressProps {
   ir: IntermediateRepresentation;
@@ -97,6 +99,10 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
   const [isCompleted, setIsCompleted] = useState(false);
   const hasTriggeredCompleteRef = useRef(false);
 
+  // GitHub / Cloud Modal State
+  const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
+  const [gitHubModalInitialError, setGitHubModalInitialError] = useState<string | undefined>(undefined);
+
   // Derive Customer Name & Target Repo
   const sanitizeSlug = (str: string) =>
     str.toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -115,7 +121,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
   const finishAndLaunch = () => {
     if (hasTriggeredCompleteRef.current) return;
     hasTriggeredCompleteRef.current = true;
-    console.log('[Floe:GenerationProgress] finishAndLaunch → calling onComplete()');
+    console.info('[Floe:GenerationProgress] finishAndLaunch → Calling onComplete() to switch to testbed');
     setIsCompleted(true);
     setCompletedSteps(GENERATION_STEPS.map(s => s.id));
 
@@ -135,7 +141,9 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
         appName: ir.name,
         customerName
       })
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn('[Floe:GenerationProgress] Non-blocking /api/deployed-app notice:', err);
+    });
 
     onComplete();
   };
@@ -143,6 +151,12 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
   const handleGitStep = async () => {
     const activeToken = typeof window !== 'undefined' ? localStorage.getItem('floe_github_pat') || '' : '';
     
+    console.group('[Floe:GenerationProgress:handleGitStep]');
+    console.info('Customer:', customerName);
+    console.info('Target Repo:', fullExpectedRepo);
+    console.info('PAT token available:', Boolean(activeToken));
+    console.groupEnd();
+
     setLogs(prev => [
       ...prev,
       `[CUSTOMER-REPO] Customer: "${customerName}"`,
@@ -154,8 +168,8 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
       setLogs(prev => [
         ...prev,
         `[GIT-SYNC] Target repository configured: ${fullExpectedRepo}`,
-        `[GIT-SYNC] No GitHub Personal Access Token saved in studio session.`,
-        `[STUDIO-SANDBOX] Launching local production testbed and live execution engine directly...`
+        `[GIT-SYNC] Notice: No GitHub Personal Access Token saved in local session.`,
+        `[STUDIO-SANDBOX] Local engine compilation complete. Launching interactive testbed...`
       ]);
       setCompletedSteps(prev => [...prev, 'git_sync']);
       setTimeout(() => {
@@ -173,7 +187,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       const res = await fetch('/api/github/sync-push', {
         method: 'POST',
@@ -194,6 +208,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
 
       clearTimeout(timeoutId);
       const data = await res.json();
+      console.info('[Floe:GenerationProgress] GitHub sync response:', data);
 
       if (res.ok && data.success) {
         setGitStatus('success');
@@ -218,6 +233,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
         }, 1200);
       } else {
         setGitStatus('failed');
+        console.warn('[Floe:GenerationProgress] GitHub sync error:', data.error);
         setLogs(prev => [
           ...prev,
           `[GIT-AUTO-PUSH] Notice: ${data.error || 'GitHub sync bypassed'}.`,
@@ -230,6 +246,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
       }
     } catch (err: any) {
       setGitStatus('failed');
+      console.warn('[Floe:GenerationProgress] GitHub sync network/timeout error:', err.message);
       setLogs(prev => [
         ...prev,
         `[GIT-AUTO-PUSH] Notice: GitHub sync timed out or bypassed (${err.message}).`,
@@ -252,6 +269,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
 
       const step = GENERATION_STEPS[idx];
       setCurrentStepIdx(idx);
+      console.info(`[Floe:GenerationProgress] Step ${idx + 1}/${GENERATION_STEPS.length}: ${step.label}`);
       setLogs(prev => [
         ...prev,
         `[FLOE-COMPILER] Starting phase: ${step.label}`,
@@ -303,14 +321,27 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={finishAndLaunch}
-          className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md hover:shadow-lg transition-all shrink-0 cursor-pointer"
-        >
-          <Play className="w-3.5 h-3.5 fill-white" />
-          <span>Launch Testbed Now</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setGitHubModalInitialError(undefined);
+              setIsGitHubModalOpen(true);
+            }}
+            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200"
+          >
+            <Settings className="w-3.5 h-3.5 text-slate-600" />
+            <span>GitHub & Render Config</span>
+          </button>
+
+          <button
+            onClick={finishAndLaunch}
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md hover:shadow-lg transition-all shrink-0 cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5 fill-white" />
+            <span>Launch Testbed Now</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Progress Bar */}
@@ -387,6 +418,20 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
           ))}
         </div>
       </div>
+
+      {/* GitHub & Cloud Sync Modal */}
+      <GitHubSyncModal
+        isOpen={isGitHubModalOpen}
+        customerName={customerName}
+        appName={ir.name || ir.domain}
+        activeDomain={ir.domain}
+        initialError={gitHubModalInitialError}
+        onClose={() => setIsGitHubModalOpen(false)}
+        onSuccess={() => {
+          setIsGitHubModalOpen(false);
+          handleGitStep();
+        }}
+      />
     </div>
   );
 };

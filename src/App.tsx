@@ -171,40 +171,48 @@ export default function App() {
       }
 
       if (storedIr) {
-        return { view: 'login', ir: storedIr };
+        return { view: 'dashboard', ir: storedIr };
       }
     }
-    return { view: 'login', ir: FINANCE_INVOICE_APPROVAL_IR };
+    return { view: 'dashboard', ir: FINANCE_INVOICE_APPROVAL_IR };
   };
 
   const initialSetup = getInitialViewAndIr();
   const [currentView, setCurrentViewRaw] = useState<'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login'>(initialSetup.view);
 
-  // ── DEBUG: wrap setCurrentView to log every caller ──────────────────────
+  // Floe Studio Active User Session State (defaults to Lead Architect persona if no custom session found)
+  const [currentUser, setCurrentUser] = useState<FloeStudioUser>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('floe_current_user') || sessionStorage.getItem('floe_current_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.id) return parsed;
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+    const defaultUser = FLOE_STUDIO_PERSONAS[0];
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('floe_current_user', JSON.stringify(defaultUser));
+        sessionStorage.setItem('floe_current_user', JSON.stringify(defaultUser));
+      } catch {}
+    }
+    return defaultUser;
+  });
+
+  // ── DEBUG: wrap setCurrentView to log every caller and state context ──────
   const setCurrentView = (v: typeof currentView) => {
     const stack = new Error().stack?.split('\n').slice(1, 4).join(' | ') || '';
-    console.log(`[Floe:nav] ${currentView} → ${v}  |  caller: ${stack}`);
+    console.info(`[Floe:nav] Transition: ${currentView} → ${v} | User: ${currentUser?.email || currentUser?.name || 'none'} | Caller: ${stack}`);
     setCurrentViewRaw(v);
   };
   // ────────────────────────────────────────────────────────────────────────
   
   // Usability mode: Friendly Mode (default) vs Developer Mode
   const [isDevMode, setIsDevMode] = useState<boolean>(false);
-
-  // Floe Studio Active User Session State (starts unauthenticated / null until user logs in)
-  const [currentUser, setCurrentUser] = useState<FloeStudioUser | null>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('floe_current_user') || sessionStorage.getItem('floe_current_user');
-        if (saved) {
-          return JSON.parse(saved);
-        }
-      } catch {
-        // ignore parse error
-      }
-    }
-    return null;
-  });
 
   // Applications state - starts empty with no pre-seeded default data
   const [apps, setApps] = useState<FloeApp[]>([]);
