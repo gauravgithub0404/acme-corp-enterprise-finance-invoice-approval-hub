@@ -12,27 +12,32 @@ import {
   Terminal, 
   Check, 
   Copy, 
-  X,
-  Layers,
-  UploadCloud,
-  Globe,
-  Radio,
-  ToggleLeft,
-  ToggleRight,
-  Sparkles,
-  Building2,
-  FolderGit2,
-  User,
-  Users,
-  ShieldCheck
+  X, 
+  Layers, 
+  UploadCloud, 
+  Globe, 
+  Radio, 
+  ToggleLeft, 
+  ToggleRight, 
+  Sparkles, 
+  Building2, 
+  FolderGit2, 
+  User, 
+  Users, 
+  ShieldCheck, 
+  Trash2, 
+  Download, 
+  FolderArchive, 
+  AlertTriangle 
 } from 'lucide-react';
+import { exportAsZip } from '../engine/codegenEngine';
+import { LEAVE_MANAGEMENT_IR, DOMAIN_PRESETS } from '../data/domains';
 
 interface GitHubSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  /** When true the modal was opened as part of the Approve & Build flow.
-   *  Shows a "Save & Start Build" primary action instead of the normal push. */
+  activeDomain?: string;
   pendingApproval?: boolean;
 }
 
@@ -61,7 +66,13 @@ interface GitHubUser {
   orgs: { login: string; avatar_url: string; description?: string }[];
 }
 
-export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClose, onSuccess, pendingApproval = false }) => {
+export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSuccess,
+  activeDomain,
+  pendingApproval: _pendingApproval
+}) => {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
   const [patToken, setPatToken] = useState('');
   
@@ -171,6 +182,114 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
 
   if (!isOpen) return null;
 
+  const [isZipping, setIsZipping] = useState(false);
+  const [isDeletingCode, setIsDeletingCode] = useState(false);
+  const [isDeletingRepo, setIsDeletingRepo] = useState(false);
+  const [deleteCodeResult, setDeleteCodeResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleDownloadZip = async () => {
+    try {
+      setIsZipping(true);
+      const activeIr = DOMAIN_PRESETS.find(p => p.domain === activeDomain) || LEAVE_MANAGEMENT_IR;
+      const blob = await exportAsZip(activeIr);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${activeIr.domain || 'floe'}-app.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error('Error creating ZIP:', e);
+    } finally {
+      setIsZipping(false);
+    }
+  };
+
+  const handleDeleteCodeFromGit = async () => {
+    if (!window.confirm(`Are you sure you want to delete and clean all application code from ${activeTargetRepo} on branch "${targetBranch}"?`)) {
+      return;
+    }
+    setIsDeletingCode(true);
+    setDeleteCodeResult(null);
+    try {
+      const [owner, repo] = activeTargetRepo.split('/');
+      const res = await fetch('/api/github/delete-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner: owner || selectedOwner,
+          repo: repo || activeTargetRepo,
+          branch: targetBranch || 'main',
+          token: patToken.trim(),
+          reason: `Cleaned via Floe App Engine for ${appName}`
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDeleteCodeResult({
+          success: true,
+          message: data.message || `Deleted all code from ${activeTargetRepo} on branch ${targetBranch}.`
+        });
+        fetchRepoStatus();
+      } else {
+        setDeleteCodeResult({
+          success: false,
+          message: data.error || 'Failed to delete code from Git repository.'
+        });
+      }
+    } catch (err: any) {
+      setDeleteCodeResult({
+        success: false,
+        message: err.message || 'Network error while deleting code.'
+      });
+    } finally {
+      setIsDeletingCode(false);
+    }
+  };
+
+  const handleDeleteRepo = async () => {
+    const confirmation = window.prompt(`DANGER: Type "${activeTargetRepo}" to permanently delete this repository from GitHub:`);
+    if (confirmation !== activeTargetRepo) {
+      return;
+    }
+    setIsDeletingRepo(true);
+    setDeleteCodeResult(null);
+    try {
+      const [owner, repo] = activeTargetRepo.split('/');
+      const res = await fetch('/api/github/repo', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner: owner || selectedOwner,
+          repo: repo || activeTargetRepo,
+          token: patToken.trim()
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDeleteCodeResult({
+          success: true,
+          message: `Successfully deleted repository ${activeTargetRepo} from GitHub.`
+        });
+        fetchRepoStatus();
+      } else {
+        setDeleteCodeResult({
+          success: false,
+          message: data.error || 'Failed to delete repository from GitHub. Ensure PAT has "delete_repo" scope.'
+        });
+      }
+    } catch (err: any) {
+      setDeleteCodeResult({
+        success: false,
+        message: err.message || 'Network error while deleting repository.'
+      });
+    } finally {
+      setIsDeletingRepo(false);
+    }
+  };
+
   const handleSaveSettings = () => {
     localStorage.setItem('floe_github_pat', patToken.trim());
     localStorage.setItem('floe_customer_name', customerName.trim());
@@ -181,12 +300,6 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
     localStorage.setItem('floe_repo_mode', repoMode);
     setSavedSettingsSuccess(true);
     setTimeout(() => setSavedSettingsSuccess(false), 2500);
-    // If opened as part of the Approve & Build flow and a token was entered,
-    // closing the modal is sufficient — ReviewScreen's onClose handler picks
-    // up the saved token and continues the build.
-    if (pendingApproval && patToken.trim()) {
-      onClose();
-    }
   };
 
   const handleSyncToGitHub = async (e: React.FormEvent) => {
@@ -256,16 +369,14 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
             </div>
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                {pendingApproval ? 'GitHub Credentials Required to Build' : 'Customer Repository & Auto-Deploy Setup'}
+                Customer Repository & Auto-Deploy Setup
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Auto-Create Repo Enabled
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                {pendingApproval
-                  ? 'Enter your GitHub PAT and click "Save & Start Build" — your repo will be created and the pipeline will start.'
-                  : 'Create a dedicated GitHub repo per customer and auto-trigger Render cloud continuous deployments'}
+                Create a dedicated GitHub repo per customer and auto-trigger Render cloud continuous deployments
               </p>
             </div>
           </div>
@@ -473,6 +584,82 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
             </div>
           </div>
 
+          {/* Download ZIP Banner */}
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3 text-xs">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2 font-bold text-white">
+                <FolderArchive className="w-4 h-4 text-indigo-400" />
+                <span>Download Generated Application Source</span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Download a clean standalone .ZIP bundle with all backend routes, SQL migrations, client UI, and docs.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleDownloadZip}
+              disabled={isZipping}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-colors shrink-0 disabled:opacity-50"
+            >
+              <Download className={`w-3.5 h-3.5 ${isZipping ? 'animate-bounce' : ''}`} />
+              <span>{isZipping ? 'Zipping...' : 'Download (.ZIP)'}</span>
+            </button>
+          </div>
+
+          {/* Delete Code from Git & Repository Danger Zone */}
+          <div className="p-4 rounded-xl bg-rose-950/20 border border-rose-900/40 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-rose-300 font-bold">
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span>Git Code Deletion & Cleanup</span>
+              </div>
+              <span className="text-[10px] uppercase font-bold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/40">
+                Danger Zone
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              Clean and remove all application code from target branch <code className="text-rose-300 font-mono">{targetBranch}</code> or permanently delete this repository on GitHub.
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleDeleteCodeFromGit}
+                disabled={isDeletingCode || !patToken.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-900/40 hover:bg-rose-900/70 border border-rose-700/60 text-rose-200 font-semibold text-xs transition-colors disabled:opacity-50"
+              >
+                <Trash2 className={`w-3.5 h-3.5 ${isDeletingCode ? 'animate-spin' : ''}`} />
+                <span>{isDeletingCode ? 'Cleaning Code...' : 'Delete Code from Git Branch'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDeleteRepo}
+                disabled={isDeletingRepo || !patToken.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 font-semibold text-xs transition-colors disabled:opacity-50"
+              >
+                <AlertTriangle className={`w-3.5 h-3.5 ${isDeletingRepo ? 'animate-spin' : ''}`} />
+                <span>{isDeletingRepo ? 'Deleting Repo...' : 'Delete Repository from GitHub'}</span>
+              </button>
+            </div>
+
+            {deleteCodeResult && (
+              <div className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
+                deleteCodeResult.success 
+                  ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300' 
+                  : 'bg-rose-950/50 border-rose-800 text-rose-300'
+              }`}>
+                {deleteCodeResult.success ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                )}
+                <span>{deleteCodeResult.message}</span>
+              </div>
+            )}
+          </div>
+
           {/* Sync Result Feedback */}
           {syncResult && (
             <div className={`p-4 rounded-xl border flex items-start gap-3 text-xs leading-relaxed ${
@@ -520,7 +707,7 @@ export const GitHubSyncModal: React.FC<GitHubSyncModalProps> = ({ isOpen, onClos
             onClick={handleSaveSettings}
             className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white transition-colors"
           >
-            {pendingApproval ? 'Save & Start Build' : 'Save Configuration'}
+            Save Configuration
           </button>
 
           <button

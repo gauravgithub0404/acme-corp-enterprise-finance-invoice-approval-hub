@@ -219,7 +219,7 @@ export class GovernanceEngine {
    */
   graduateLadder(actorId: string, actionType: string, toRung: LadderRung, grantedBy: string, reason?: string): LadderEntry {
     if (grantedBy === actorId) {
-      throw new Error('Governance violation: an actor cannot graduate its own ladder rung. A distinct human approver is required.');
+      throw new Error('Governance violation: an actor cannot self-graduate its own ladder rung. A distinct human approver is required.');
     }
     if (checkHardFloor(actionType)) {
       throw new Error(`Governance violation: "${actionType}" matches a hard floor and can never be added to the approval ladder.`);

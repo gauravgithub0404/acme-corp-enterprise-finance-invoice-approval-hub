@@ -16,8 +16,18 @@ import {
   ShieldAlert,
   HardDrive,
   Globe,
-  Plus
+  Plus,
+  Github,
+  GitBranch,
+  UploadCloud,
+  Key,
+  Lock,
+  Download,
+  FolderArchive,
+  AlertTriangle
 } from 'lucide-react';
+import { exportAsZip } from '../engine/codegenEngine';
+import { LEAVE_MANAGEMENT_IR, DOMAIN_PRESETS } from '../data/domains';
 import { getPublicTestbedUrl, getCurrentOrigin } from '../utils/urlHelper';
 
 interface CleanRenderModalProps {
@@ -34,6 +44,7 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
   activeAppName = 'Generated Application'
 }) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [isPushingGit, setIsPushingGit] = useState(false);
   const [isDeletingService, setIsDeletingService] = useState<string | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string>('');
   const [deleteOtherServices, setDeleteOtherServices] = useState(false);
@@ -43,9 +54,31 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
   const [logs, setLogs] = useState<string[]>([]);
   const [customDomain, setCustomDomain] = useState<string>(activeDomain);
 
+  // GitHub State
+  const [patToken, setPatToken] = useState<string>('');
+  const [githubRepo, setGithubRepo] = useState<string>('gauravgithub0404/FloeFinal');
+  const [githubBranch, setGithubBranch] = useState<string>('main');
+  const [githubStatus, setGithubStatus] = useState<any | null>(null);
+  const [isLoadingGitStatus, setIsLoadingGitStatus] = useState<boolean>(false);
+  const [showGitPatInput, setShowGitPatInput] = useState<boolean>(false);
+
   useEffect(() => {
     setCustomDomain(activeDomain);
   }, [activeDomain]);
+
+  const fetchGithubStatus = async (token?: string) => {
+    setIsLoadingGitStatus(true);
+    try {
+      const activePat = token !== undefined ? token : patToken;
+      const res = await fetch(`/api/github/status?repo=${encodeURIComponent(githubRepo)}&branch=${encodeURIComponent(githubBranch)}&token=${encodeURIComponent(activePat)}`);
+      const data = await res.json();
+      setGithubStatus(data);
+    } catch (err: any) {
+      console.warn('Failed to load GitHub status:', err);
+    } finally {
+      setIsLoadingGitStatus(false);
+    }
+  };
 
   const fetchServices = async () => {
     try {
@@ -55,7 +88,6 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
         const sList = data.services || [];
         setServices(sList);
         if (sList.length > 0 && !selectedServiceId) {
-          // Prefer matching service or first
           const matched = sList.find((s: any) => 
             s.name?.toLowerCase().includes(activeDomain.toLowerCase()) ||
             s.name?.toLowerCase().includes('floefinal') ||
@@ -71,12 +103,21 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      const savedPat = localStorage.getItem('floe_github_pat') || '';
+      const savedRepo = localStorage.getItem('floe_github_repo') || 'gauravgithub0404/FloeFinal';
+      const savedBranch = localStorage.getItem('floe_github_branch') || 'main';
+
+      setPatToken(savedPat);
+      setGithubRepo(savedRepo.includes('/') ? savedRepo : `gauravgithub0404/${savedRepo || 'FloeFinal'}`);
+      setGithubBranch(savedBranch);
+
       fetchServices();
+      fetchGithubStatus(savedPat);
       setResult(null);
       setLogs([
         `[Ready] Selected Domain: ${activeDomain}`,
         `[Ready] App Name: ${activeAppName}`,
-        `[Tip] Cleaning Render wipes previous build cache and forces Render to compile your generated domain fresh.`
+        `[Tip] Render builds directly from GitHub repo "${savedRepo || 'gauravgithub0404/FloeFinal'}". Push code before clean deploying.`
       ]);
     }
   }, [isOpen, activeDomain]);
@@ -87,6 +128,64 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 2500);
+  };
+
+  const handleSavePat = () => {
+    if (patToken.trim()) {
+      localStorage.setItem('floe_github_pat', patToken.trim());
+      fetchGithubStatus(patToken.trim());
+      setShowGitPatInput(false);
+      setLogs(prev => [...prev, `[GitHub] Personal Access Token saved.`]);
+    }
+  };
+
+  const handlePushToGithub = async (): Promise<boolean> => {
+    setIsPushingGit(true);
+    setLogs(prev => [
+      ...prev,
+      `[GitHub 1/2] Syncing all workspace files to GitHub repo "${githubRepo}" (${githubBranch})...`
+    ]);
+
+    try {
+      const res = await fetch('/api/github/sync-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: 'Enterprise',
+          appName: activeAppName,
+          owner: githubRepo.split('/')[0] || 'gauravgithub0404',
+          repo: githubRepo.split('/')[1] || 'FloeFinal',
+          branch: githubBranch,
+          token: patToken.trim(),
+          commitMessage: `feat(floe): update all components & domains for ${activeAppName} [${customDomain}]`
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setLogs(prev => [
+          ...prev,
+          `[GitHub 2/2] Pushed all workspace files successfully! Commit SHA: ${data.commitSha?.slice(0, 7) || 'latest'}`,
+          `[GitHub] GitHub repo is now 100% updated with all components and code.`
+        ]);
+        fetchGithubStatus(patToken);
+        return true;
+      } else {
+        const errMsg = data.error || 'Failed to push to GitHub';
+        setLogs(prev => [
+          ...prev,
+          `[GitHub Error] ${errMsg}`,
+          `[Tip] If permissions are required, provide a GitHub Personal Access Token with "repo" scope.`
+        ]);
+        setShowGitPatInput(true);
+        return false;
+      }
+    } catch (err: any) {
+      setLogs(prev => [...prev, `[GitHub Fatal] Network error during Git push: ${err.message}`]);
+      return false;
+    } finally {
+      setIsPushingGit(false);
+    }
   };
 
   const handleDeleteService = async (serviceId: string, serviceName: string) => {
@@ -104,7 +203,6 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
       const data = await res.json();
       if (res.ok && data.success !== false) {
         setLogs(prev => [...prev, `[Deleted] Successfully deleted service "${serviceName}" from Render.`]);
-        // Refresh services list
         await fetchServices();
         if (selectedServiceId === serviceId) {
           setSelectedServiceId('');
@@ -119,8 +217,16 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
     }
   };
 
-  const handleCleanRedeploy = async () => {
+  const handleCleanRedeploy = async (shouldPushGitFirst: boolean = false) => {
     setIsLoading(true);
+
+    if (shouldPushGitFirst) {
+      const pushSuccess = await handlePushToGithub();
+      if (!pushSuccess) {
+        setLogs(prev => [...prev, `[Warning] GitHub sync had issues. Proceeding to trigger Render redeploy...`]);
+      }
+    }
+
     setLogs(prev => [
       ...prev,
       `[1/4] Initiating Render cache purge for domain "${customDomain}"...`,
@@ -128,7 +234,6 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
     ]);
 
     try {
-      // 1. First sync active app to local server state
       await fetch('/api/deployed-app', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -138,7 +243,6 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
         })
       }).catch(() => {});
 
-      // 2. Call Render clean-redeploy endpoint
       const res = await fetch('/api/render/clean-redeploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -165,7 +269,7 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
           ...prev,
           `[3/4] Render build cache purged successfully!`,
           `[4/4] Triggered clean deployment on service "${data.serviceName || 'Render Service'}" (Deploy ID: ${data.deployId || 'active'}).`,
-          `[Done] Ready! Your app is now building clean on Render.`
+          `[Done] Ready! Render is now building your latest commit clean without stale cache.`
         ]);
         fetchServices();
       } else {
@@ -200,11 +304,11 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
               <h2 className="text-base font-semibold text-white flex items-center gap-2">
                 Clean Render & Deployed Apps
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                  Cache Purge & Cleanup
+                  Cache Purge & Sync
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Purge Render build cache, delete obsolete apps, or force clean deployment
+                Push latest code to GitHub, purge Render build cache, and force clean deployment
               </p>
             </div>
           </div>
@@ -219,47 +323,102 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
         {/* Content */}
         <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
           
-          {/* Why this is needed note */}
-          <div className="p-3.5 bg-slate-950/70 rounded-xl border border-slate-800 text-xs text-slate-300 space-y-1.5">
-            <div className="font-semibold text-amber-300 flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              How Floe cleans and switches Render applications:
+          {/* GitHub Sync Status Card */}
+          <div className="p-4 bg-slate-950/90 rounded-xl border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+                <Github className="w-4 h-4 text-white" />
+                <span>Connected GitHub Repository:</span>
+                <a 
+                  href={`https://github.com/${githubRepo}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="text-indigo-400 hover:underline font-mono text-[11px]"
+                >
+                  {githubRepo}
+                </a>
+              </div>
+              <button
+                onClick={() => setShowGitPatInput(!showGitPatInput)}
+                className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+              >
+                <Key className="w-3 h-3" /> {patToken ? 'Edit Token' : 'Add Token'}
+              </button>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Render caches npm builds between deployments. If Render still serves the previous default app, this action will <strong>purge Render's build cache</strong>, set <code className="text-amber-300 font-mono">FLOE_APP_DOMAIN={customDomain}</code>, and trigger a 100% fresh deployment. You can also <strong>delete obsolete apps</strong> directly below.
-            </p>
+
+            {/* Last Commit Info */}
+            <div className="flex items-center justify-between text-xs bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80">
+              <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+                <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Branch: <strong className="text-slate-200">{githubBranch}</strong></span>
+                {githubStatus?.lastCommit && (
+                  <span className="text-slate-500 font-mono">
+                    (Last Commit: {githubStatus.lastCommit.sha?.slice(0, 7)})
+                  </span>
+                )}
+              </div>
+
+              <button
+                onClick={() => handlePushToGithub()}
+                disabled={isPushingGit}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[11px] font-semibold transition-colors"
+              >
+                <UploadCloud className={`w-3.5 h-3.5 ${isPushingGit ? 'animate-bounce' : ''}`} />
+                <span>{isPushingGit ? 'Pushing...' : 'Push Latest Code to GitHub'}</span>
+              </button>
+            </div>
+
+            {/* PAT Input if toggled */}
+            {showGitPatInput && (
+              <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-500/30 space-y-2 text-xs">
+                <div className="flex items-center justify-between text-indigo-300">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" /> GitHub Personal Access Token (PAT)
+                  </span>
+                  <a 
+                    href="https://github.com/settings/tokens/new?scopes=repo&description=Floe+Deploy" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-indigo-400 hover:underline flex items-center gap-0.5"
+                  >
+                    Generate Token <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={patToken}
+                    onChange={e => setPatToken(e.target.value)}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    className="flex-1 px-3 py-1.5 rounded-md bg-slate-950 border border-slate-700 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={handleSavePat}
+                    className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Configuration Form */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="space-y-1.5">
-              <label className="text-slate-400 font-medium block">Active Domain Slug:</label>
-              <input 
+          {/* Domain & Deployment Settings */}
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold text-slate-300">
+              Active App Domain to Clean & Deploy:
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
                 type="text"
                 value={customDomain}
                 onChange={e => setCustomDomain(e.target.value)}
                 placeholder="e.g. finance-invoice-approval"
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
               />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-slate-400 font-medium block">Target Render Web Service:</label>
-              <select
-                value={selectedServiceId}
-                onChange={e => setSelectedServiceId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-              >
-                {services.length > 0 ? (
-                  services.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.id.slice(0, 10)}...)
-                    </option>
-                  ))
-                ) : (
-                  <option value="">Default Render Service (Auto-detect)</option>
-                )}
-              </select>
+              <div className="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+                <span>App Name: <strong className="text-slate-200">{activeAppName}</strong></span>
+              </div>
             </div>
           </div>
 
@@ -412,23 +571,23 @@ export const CleanRenderModal: React.FC<CleanRenderModalProps> = ({
           </button>
 
           <div className="flex items-center gap-2">
-            <a
-              href={directAppUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+            <button
+              onClick={() => handleCleanRedeploy(true)}
+              disabled={isLoading || isPushingGit}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/20"
+              title="Push all files to GitHub first, then trigger clean Render build"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Open Direct Link</span>
-            </a>
+              <UploadCloud className={`w-3.5 h-3.5 ${isPushingGit ? 'animate-bounce' : ''}`} />
+              <span>{isPushingGit ? 'Syncing to GitHub...' : 'Sync to GitHub & Clean Redeploy'}</span>
+            </button>
 
             <button
-              onClick={handleCleanRedeploy}
-              disabled={isLoading}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20"
+              onClick={() => handleCleanRedeploy(false)}
+              disabled={isLoading || isPushingGit}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>{isLoading ? 'Purging Cache & Deploying...' : 'Clean Cache & Redeploy on Render'}</span>
+              <span>{isLoading ? 'Deploying...' : 'Clean Cache & Redeploy'}</span>
             </button>
           </div>
         </div>

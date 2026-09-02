@@ -40,8 +40,28 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
     });
   }
 
+  // 3. Role validations
+  if (!ir.roles || ir.roles.length === 0) {
+    errors.push({
+      type: 'schema',
+      severity: 'error',
+      message: 'IR must contain at least one role definition.',
+      path: 'roles'
+    });
+  }
+
+  // 4. Workflow validations
+  if (!ir.workflows || ir.workflows.length === 0) {
+    errors.push({
+      type: 'schema',
+      severity: 'error',
+      message: 'IR must contain at least one workflow definition.',
+      path: 'workflows'
+    });
+  }
+
   const entityNames = new Set<string>();
-  ir.entities.forEach((entity, eIdx) => {
+  (ir.entities || []).forEach((entity, eIdx) => {
     if (!entity.name) {
       errors.push({
         type: 'schema',
@@ -63,9 +83,9 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
     }
   });
 
-  // 3. Referential integrity checks for fields and relationships
-  ir.entities.forEach((entity, eIdx) => {
-    entity.fields.forEach((field, fIdx) => {
+  // 5. Referential integrity checks for fields and relationships
+  (ir.entities || []).forEach((entity, eIdx) => {
+    (entity.fields || []).forEach((field, fIdx) => {
       if (typeof field.type === 'string' && field.type.startsWith('ref:')) {
         const targetEntity = field.type.replace('ref:', '');
         if (!entityNames.has(targetEntity)) {
@@ -80,7 +100,7 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
     });
   });
 
-  ir.relationships.forEach((rel, rIdx) => {
+  (ir.relationships || []).forEach((rel, rIdx) => {
     if (!entityNames.has(rel.from)) {
       errors.push({
         type: 'semantic',
@@ -99,14 +119,14 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
     }
   });
 
-  // 4. Workflow Graph & Semantic checks
+  // 6. Workflow Graph & Semantic checks
   let totalNodes = 0;
 
-  ir.workflows.forEach((workflow, wIdx) => {
+  (ir.workflows || []).forEach((workflow, wIdx) => {
     const nodeIds = new Set<string>();
     const nodeMap = new Map<string, typeof workflow.nodes[0]>();
 
-    workflow.nodes.forEach((node, nIdx) => {
+    (workflow.nodes || []).forEach((node, nIdx) => {
       totalNodes++;
       if (!node.id) {
         errors.push({
@@ -168,7 +188,7 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
 
     // Verify all edge targets resolve to valid node IDs (including terminals)
     const incomingEdges = new Map<string, number>();
-    workflow.edges.forEach((edge, eIdx) => {
+    (workflow.edges || []).forEach((edge, eIdx) => {
       if (!nodeIds.has(edge.from)) {
         errors.push({
           type: 'semantic',
@@ -190,10 +210,10 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
     });
 
     // Check for unreachable non-entry nodes
-    const entryNodes = workflow.nodes.filter(n => n.type === 'trigger' || n.id === 's1' || n.id === 'exp_1');
-    const firstNodeId = entryNodes[0]?.id || workflow.nodes[0]?.id;
+    const entryNodes = (workflow.nodes || []).filter(n => n.type === 'trigger' || n.id === 's1' || n.id === 'exp_1');
+    const firstNodeId = entryNodes[0]?.id || (workflow.nodes || [])[0]?.id;
 
-    workflow.nodes.forEach((node) => {
+    (workflow.nodes || []).forEach((node) => {
       if (node.id !== firstNodeId && !incomingEdges.has(node.id)) {
         warnings.push({
           type: 'semantic',
@@ -210,7 +230,7 @@ export function validateIR(ir: IntermediateRepresentation): ValidationResult {
     errors,
     warnings,
     summary: {
-      entityCount: ir.entities.length,
+      entityCount: (ir.entities || []).length,
       nodeCount: totalNodes,
       executionModes
     }

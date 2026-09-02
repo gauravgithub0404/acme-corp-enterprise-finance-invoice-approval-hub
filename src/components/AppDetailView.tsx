@@ -8,10 +8,11 @@ import { GeneratedCodeViewer } from './GeneratedCodeViewer';
 import { DocsViewer } from './DocsViewer';
 import { WorkflowGraph } from './WorkflowGraph';
 import { ProductionArchitectureScreen } from './ProductionArchitectureScreen';
+import { GitHubSyncModal } from './GitHubSyncModal';
 import { 
   Download, Play, Code, BookOpen, GitBranch, ArrowLeft, 
   CheckCircle2, Terminal, Server, Globe, ExternalLink, Copy, Check, RefreshCw, Send, Radio, HardDrive,
-  Cpu, Activity, AlertCircle, ShieldCheck, Zap
+  Cpu, Activity, AlertCircle, ShieldCheck, Zap, Github
 } from 'lucide-react';
 
 interface AppDetailViewProps {
@@ -66,6 +67,7 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'sandbox' | 'production' | 'deploy' | 'code' | 'docs' | 'workflow'>('sandbox');
   const [isZipping, setIsZipping] = useState(false);
+  const [isGitModalOpen, setIsGitModalOpen] = useState(false);
 
   // Selected deployment machine (Defaults to Node 2: gaurav)
   const [selectedNode, setSelectedNode] = useState<ServerNode>(DEFAULT_SERVER_NODES[0]);
@@ -294,6 +296,15 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
           >
             <Zap className="w-3.5 h-3.5" />
             <span>Ready for Production? 🚀</span>
+          </button>
+
+          <button
+            onClick={() => setIsGitModalOpen(true)}
+            title="Push to GitHub or Delete repository from Git"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-black text-white text-xs font-semibold shadow-xs transition-all"
+          >
+            <Github className="w-3.5 h-3.5 text-slate-300" />
+            <span>Git Sync & Delete</span>
           </button>
 
           <button
@@ -805,6 +816,16 @@ export const AppDetailView: React.FC<AppDetailViewProps> = ({
           <DocsViewer ir={ir} />
         )}
       </div>
+
+      {/* GitHub Sync & Delete Repository Modal */}
+      <GitHubSyncModal
+        isOpen={isGitModalOpen}
+        onClose={() => setIsGitModalOpen(false)}
+        activeDomain={ir.domain}
+        onSuccess={() => {
+          setIsGitModalOpen(false);
+        }}
+      />
     </div>
   );
 };

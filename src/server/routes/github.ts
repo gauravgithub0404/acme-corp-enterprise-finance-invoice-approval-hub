@@ -180,8 +180,8 @@ router.post('/sync-push', async (req, res) => {
     if (shouldTriggerDeploy) {
       try {
         const services = await listRenderServices();
-        const targetService = services.find((s: any) => s.service?.name?.includes(targetRepoName) || s.service?.name?.includes('floe') || s.service?.repo?.includes(targetRepoName));
-        if (targetService?.service?.id) { await triggerRenderDeploy(targetService.service.id, true); deployTriggered = true; }
+        const targetService = services.find((s) => s.name?.includes(targetRepoName) || s.name?.includes('floe') || s.repo?.includes(targetRepoName));
+        if (targetService?.id) { await triggerRenderDeploy(targetService.id, true); deployTriggered = true; }
       } catch { /* non-fatal */ }
     }
 

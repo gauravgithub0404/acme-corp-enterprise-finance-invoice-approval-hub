@@ -1821,3 +1821,5 @@ export const DOMAINS: DomainDefinition[] = [
     default_ir: PAYROLL_PROCESSING_IR
   }
 ];
+
+export const DOMAIN_PRESETS = DOMAINS.map(d => d.default_ir);

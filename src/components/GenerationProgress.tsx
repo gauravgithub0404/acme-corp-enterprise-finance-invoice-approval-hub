@@ -115,6 +115,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
   const finishAndLaunch = () => {
     if (hasTriggeredCompleteRef.current) return;
     hasTriggeredCompleteRef.current = true;
+    console.log('[Floe:GenerationProgress] finishAndLaunch → calling onComplete()');
     setIsCompleted(true);
     setCompletedSteps(GENERATION_STEPS.map(s => s.id));
 

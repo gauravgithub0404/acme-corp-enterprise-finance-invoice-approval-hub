@@ -178,7 +178,15 @@ export default function App() {
   };
 
   const initialSetup = getInitialViewAndIr();
-  const [currentView, setCurrentView] = useState<'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login'>(initialSetup.view);
+  const [currentView, setCurrentViewRaw] = useState<'dashboard' | 'chat' | 'review' | 'generating' | 'app_detail' | 'standalone_testbed' | 'standalone_app' | 'login'>(initialSetup.view);
+
+  // ── DEBUG: wrap setCurrentView to log every caller ──────────────────────
+  const setCurrentView = (v: typeof currentView) => {
+    const stack = new Error().stack?.split('\n').slice(1, 4).join(' | ') || '';
+    console.log(`[Floe:nav] ${currentView} → ${v}  |  caller: ${stack}`);
+    setCurrentViewRaw(v);
+  };
+  // ────────────────────────────────────────────────────────────────────────
   
   // Usability mode: Friendly Mode (default) vs Developer Mode
   const [isDevMode, setIsDevMode] = useState<boolean>(false);
@@ -228,8 +236,10 @@ export default function App() {
       // On the studio (localhost / non-Render), this effect should be a no-op
       // so it cannot interfere with generation or studio navigation.
       if (!isRenderHost && !isExplicitTestbed) {
+        console.log('[Floe:initApp] localhost + no testbed param → early exit (no-op)');
         return;
       }
+      console.log('[Floe:initApp] Render host or explicit testbed — fetching server config');
 
       try {
         const deployedRes = await fetch('/api/deployed-app');
@@ -342,6 +352,7 @@ export default function App() {
 
   // Authentication Handlers
   const handleLoginSuccess = (user: FloeStudioUser) => {
+    console.log('[Floe:handleLoginSuccess] called for user:', user.id, user.name);
     setCurrentUser(user);
     if (typeof window !== 'undefined') {
       try {
@@ -425,6 +436,7 @@ export default function App() {
   };
 
   const handleConfirmBuild = (ir: IntermediateRepresentation) => {
+    console.log('[Floe:handleConfirmBuild] called — transitioning to generating');
     setCandidateIr(ir);
     if (typeof window !== 'undefined') {
       try {
@@ -446,6 +458,7 @@ export default function App() {
   };
 
   const handleGenerationComplete = () => {
+    console.log('[Floe:handleGenerationComplete] called — setting postGenerationRef=true, transitioning to standalone_testbed');
     // Lock the boot useEffect so it cannot race against this transition and
     // overwrite our intended view (standalone_testbed) with login.
     postGenerationRef.current = true;
@@ -528,6 +541,10 @@ export default function App() {
     setSelectedApp(app);
     setCurrentView('app_detail');
   };
+
+  // ── DEBUG: log every render decision ────────────────────────────────────
+  console.log(`[Floe:render] view="${currentView}" currentUser=${currentUser ? currentUser.id : 'null'} postGen=${postGenerationRef.current}`);
+  // ────────────────────────────────────────────────────────────────────────
 
   // If in standalone standalone_app mode (e.g. Render production deployment), render directly as clean standalone app
   if (currentView === 'standalone_app') {
